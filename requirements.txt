@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+asyncpg
+aiosqlite
+python-dotenv
+python-multipart
+Pillow
+openai
+kiri-ocr
+pytest

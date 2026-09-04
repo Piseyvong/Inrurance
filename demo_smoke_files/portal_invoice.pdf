@@ -1,0 +1,10 @@
+%PDF-1.4
+patient_name: Sok Pisey
+provider_name: Phnom Penh Demo Clinic
+invoice_number: INV-DEMO-1001
+service_date: 2026-07-31
+line_item: Consultation 25.00
+line_item: Medicine 24.99
+claim_amount: 49.99
+total_amount: 49.99
+currency: USD
