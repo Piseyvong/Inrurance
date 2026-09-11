@@ -3,31 +3,23 @@
 from io import BytesIO
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers, UploadFile
 
 from app.database import Base
 import app.models  # noqa: F401
 
 
-@pytest.fixture()
-def db_session():
-    """Return an isolated in-memory database session."""
+@pytest.fixture
+async def async_db_session(tmp_path):
+    """Return an isolated async SQLite database session."""
 
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    session = session_factory()
-    try:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
         yield session
-    finally:
-        session.close()
+    await engine.dispose()
 
 
 def upload_file(filename: str, content: bytes, content_type: str) -> UploadFile:
