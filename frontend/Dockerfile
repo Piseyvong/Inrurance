@@ -4,7 +4,7 @@
 # vars are not readable at container runtime), so it must be passed as a
 # build ARG pointing at wherever the backend is actually publicly reachable —
 # rebuild this image if that address ever changes.
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
