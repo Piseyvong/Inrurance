@@ -1,5 +1,7 @@
 """OCR provider abstraction and document processing service."""
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -181,11 +183,11 @@ async def process_document(document_id: int, db: AsyncSession, provider: OCRProv
     await db.refresh(ocr_run)
 
     try:
-        prepared_paths = prepare_pages_for_ocr(
-            Path(document.file_path),
-            require_pdf_images=provider.engine_name == "tesseract",
-        )
-        result = _extract_pages(provider, prepared_paths)
+        # PDF rendering, Tesseract, and the OCR-cleanup LLM call are all
+        # blocking. Running them inline would freeze this worker's event
+        # loop for every other request until the document finishes, so they
+        # run in a thread instead.
+        result = await asyncio.to_thread(_prepare_and_extract, provider, Path(document.file_path))
         ocr_run.engine = result.engine
         ocr_run.engine_version = result.engine_version
         ocr_run.status = result.status
@@ -250,10 +252,25 @@ async def list_ocr_runs(document_id: int, db: AsyncSession) -> list[OCRRun]:
     return list(result.scalars().all())
 
 
-def _extract_pages(provider: OCRProvider, prepared_paths: list[Path]) -> OCRResult:
-    """Run OCR for every prepared page and combine normalised evidence."""
+def _prepare_and_extract(provider: OCRProvider, file_path: Path) -> OCRResult:
+    """Render pages and run OCR. Runs off the event loop via asyncio.to_thread."""
 
-    page_results = [provider.extract(path) for path in prepared_paths]
+    prepared_paths = prepare_pages_for_ocr(file_path, require_pdf_images=provider.engine_name == "tesseract")
+    return _extract_pages(provider, prepared_paths)
+
+
+def _extract_pages(provider: OCRProvider, prepared_paths: list[Path]) -> OCRResult:
+    """Run OCR for every prepared page and combine normalised evidence.
+
+    Pages are independent, so multi-page documents run one Tesseract call per
+    page concurrently instead of paying for each page's OCR time in series.
+    """
+
+    if len(prepared_paths) > 1:
+        with ThreadPoolExecutor(max_workers=min(4, len(prepared_paths))) as executor:
+            page_results = list(executor.map(provider.extract, prepared_paths))
+    else:
+        page_results = [provider.extract(path) for path in prepared_paths]
     first_result = page_results[0]
     all_lines: list[OCRLineResult] = []
     raw_text_parts: list[str] = []

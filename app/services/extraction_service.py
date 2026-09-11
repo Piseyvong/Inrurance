@@ -1,5 +1,6 @@
 """Persistence service for structured extraction results."""
 
+import asyncio
 import json
 
 from fastapi import HTTPException
@@ -44,7 +45,11 @@ async def run_extraction_for_document(document_id: int, db: AsyncSession) -> lis
     try:
         document.extraction_status = "processing"
         await db.commit()
-        extraction = extract_fields_from_ocr(
+        # The Azure OpenAI call inside extract_fields_from_ocr is a blocking
+        # network request; running it in a thread keeps this worker's event
+        # loop free for other requests while it's in flight.
+        extraction = await asyncio.to_thread(
+            extract_fields_from_ocr,
             document.doc_type,
             # Raw Tesseract output is the extraction evidence. Clean OCR is a
             # separate readability layer and must never become a factual source.
