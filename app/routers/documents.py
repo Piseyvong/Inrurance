@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -55,6 +56,16 @@ async def preview_document(document_id: int, x_demo_user: int = Header(...), db:
     return FileResponse(document.file_path, media_type=document.mime_type or "application/octet-stream", filename=document.original_filename)
 
 
+@router.get("/{document_id}/download")
+async def download_document(document_id: int, x_demo_user: int = Header(...), db: AsyncSession = Depends(get_db)):
+    """Download an original claim document after role/ownership checks."""
+    await authorize_document(document_id, x_demo_user, db)
+    document = await db.get(Document, document_id)
+    if document is None or not document.file_path:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return FileResponse(document.file_path, media_type="application/octet-stream", filename=document.original_filename)
+
+
 @router.post("/{document_id}/extract", response_model=list[ExtractedFieldRead])
 async def extract_document_fields(document_id: int, x_demo_user: int = Header(...), db: AsyncSession = Depends(get_db)):
     """Run structured extraction from the latest successful OCR text."""
@@ -67,5 +78,5 @@ async def correct_extracted_field(document_id:int, field_id:int, body:FieldCorre
     await authorize_document(document_id, x_demo_user, db)
     user=await actor(db,x_demo_user); field=await db.get(ExtractedField,field_id); document=await db.get(Document,document_id)
     if not field or field.document_id != document_id: raise HTTPException(404,"Extracted field not found")
-    old=field.field_value; field.field_value=body.value.strip(); field.validation_status="corrected"; field.extraction_method="human_correction"
-    db.add(AuditLog(claim_id=document.claim_id,actor=user.email,action="field_manually_corrected",details=f"field={field.field_name}; old={old}; new={field.field_value}"));await db.commit();await db.refresh(field);return field
+    old=field.officer_corrected_value or field.field_value; field.officer_corrected_value=body.value.strip(); field.officer_corrected_by=user.id; field.officer_corrected_at=datetime.now(timezone.utc); field.validation_status="corrected"
+    db.add(AuditLog(claim_id=document.claim_id,actor=user.email,user_id=user.id,actor_role=user.role,action="officer_corrected_field",entity_type="extracted_field",entity_id=field.id,old_value=old,new_value=field.officer_corrected_value,details=f"field={field.field_name}"));await db.commit();await db.refresh(field);return field

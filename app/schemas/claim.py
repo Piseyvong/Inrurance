@@ -14,6 +14,7 @@ class ClaimCreate(BaseModel):
     claim_type: str = "health_outpatient"
     incident_date: date | None = None
     claimed_amount: Decimal | None = None
+    customer_policy_id: int | None = None
 
 
 class ClaimRead(BaseModel):

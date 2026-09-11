@@ -47,7 +47,10 @@ database settings before running Alembic.
 - `UPLOAD_DIR`, default `uploads`
 - `PROCESSED_DIR`, default `processed_uploads`
 - `MAX_UPLOAD_BYTES`, default `10485760`
-- `OCR_PROVIDER`, default `kiri`; set `demo_text` only for synthetic local API testing
+- `OCR_PROVIDER`, default `tesseract`; set `demo_text` only for synthetic local API testing
+- `TESSERACT_CMD`, optional absolute path to `tesseract.exe` on Windows
+- `TESSERACT_LANGUAGES`, default `khm+eng`
+- `TESSERACT_TESSDATA_DIR`, a directory containing `khm.traineddata` and `eng.traineddata`; use a path without spaces on Windows, such as `C:\tesseract-tessdata`
 - `AZURE_OPENAI_ENDPOINT`, Azure OpenAI endpoint from Microsoft Foundry
 - `AZURE_OPENAI_API_KEY`, Azure OpenAI key for local testing
 - `AZURE_OPENAI_DEPLOYMENT`, existing model deployment name from View deployments
@@ -164,18 +167,18 @@ sensitive prompts.
 
 ## OCR Notes
 
-The real OCR provider is Kiri OCR through the verified package API:
+The real OCR provider is local Tesseract OCR configured for Khmer and English:
 
 ```python
-from kiri_ocr import OCR
+import pytesseract
+from PIL import Image
 
-ocr = OCR(decode_method="accurate")
-text, results = ocr.extract_text(file_path)
+text = pytesseract.image_to_string(Image.open(file_path), lang="khm+eng")
 ```
 
 The backend stores raw text, line text, line confidence, bounding boxes when
-available, and the `kiri_ocr` engine name in `ocr_runs`. PDF uploads are rendered
-to page images before they are sent to Kiri OCR. `OCR_PROVIDER=demo_text` remains
+available, and the `tesseract` engine name in `ocr_runs`. PDF uploads are rendered
+to page images before they are sent to Tesseract. `OCR_PROVIDER=demo_text` remains
 available only for synthetic local workflow tests.
 
 ## Known Limitations
@@ -195,7 +198,7 @@ available only for synthetic local workflow tests.
 - Add authentication and role separation for claimants and officers.
 - Add encrypted object storage and retention policies.
 - Replace synchronous processing with Celery, Dramatiq, or a managed queue.
-- Evaluate Kiri OCR against a larger real Khmer-English claims document set.
+- Evaluate Tesseract OCR against a larger real Khmer-English claims document set.
 - Add malware scanning and stricter content inspection.
 - Add richer officer correction workflows and immutable audit protections.
 - Add a deterministic rules engine only when automatic approval is explicitly requested.

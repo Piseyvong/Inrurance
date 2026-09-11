@@ -16,7 +16,7 @@ from app.models.audit_log import AuditLog
 from app.models.document import Document
 from app.models.extracted_field import ExtractedField
 from app.services.claim_service import get_claim_or_404
-from app.services.policy_service import document_completeness, get_policy, required_types
+from app.services.policy_service import document_completeness, get_policy_for_claim, required_types
 from app.services.extraction_service import run_extraction_for_document
 from app.services.ocr import OCRProvider, process_document
 from app.services.verification_service import run_verification
@@ -35,13 +35,17 @@ async def run_claim_precheck(
     """
 
     claim = await get_claim_or_404(claim_id, db)
+    claim.status = "processing"
+    claim.review_status = "not_started"
+    db.add(AuditLog(claim_id=claim.id, actor="system", action="processing_started", entity_type="claim", entity_id=claim.id))
+    await db.commit()
     document_result = await db.execute(
         select(Document)
         .where(Document.claim_id == claim_id)
         .order_by(Document.uploaded_at.asc(), Document.id.asc())
     )
     documents = list(document_result.scalars().all())
-    policy = await get_policy(db, claim.claim_type)
+    policy = await get_policy_for_claim(db, claim)
     completeness = document_completeness(policy, {document.doc_type for document in documents})
     if not completeness["is_complete"]:
         missing = ", ".join(completeness["missing_document_types"])
@@ -67,7 +71,11 @@ async def run_claim_precheck(
                 await db.commit()
 
     await _populate_claim_summary_from_extraction(claim, db)
-    return await run_verification(claim_id, db)
+    report = await run_verification(claim_id, db)
+    for document in documents:
+        document.verification_status = "completed"
+    await db.commit()
+    return report
 
 
 async def _populate_claim_summary_from_extraction(claim, db: AsyncSession) -> None:
@@ -81,9 +89,10 @@ async def _populate_claim_summary_from_extraction(claim, db: AsyncSession) -> No
     )
     values: dict[str, list[tuple[str, str]]] = {}
     for field, doc_type in result.all():
-        if field.validation_status != "valid" or not field.field_value:
+        effective_value = field.officer_corrected_value or field.normalized_value or field.field_value
+        if (field.validation_status or "").upper() not in {"VALID", "CORRECTED"} or not effective_value:
             continue
-        values.setdefault(field.field_name, []).append((doc_type, field.field_value.strip()))
+        values.setdefault(field.field_name, []).append((doc_type, effective_value.strip()))
 
     def first(name: str, preferred: tuple[str, ...] = ()) -> str | None:
         candidates = values.get(name, [])
@@ -93,10 +102,13 @@ async def _populate_claim_summary_from_extraction(claim, db: AsyncSession) -> No
                 return match
         return candidates[0][1] if candidates else None
 
-    claimant = first("claimant_name", ("claim_form", "medical_report", "invoice"))
-    date_value = first("incident_date", ("claim_form",)) or first("service_date", ("medical_report", "invoice"))
-    amount_value = first("claim_amount", ("claim_form", "invoice")) or first("total_amount", ("invoice",))
-    description = first("incident_description", ("medical_report", "claim_form")) or first("diagnosis", ("medical_report",))
+    # A claim summary must keep the meaning declared by the claim form. A
+    # treatment/service/invoice date is not a substitute for incident_date,
+    # and an invoice total is not automatically the amount being claimed.
+    claimant = first("claimant_name", ("claim_form",))
+    date_value = first("incident_date", ("claim_form",))
+    amount_value = first("claim_amount", ("claim_form",)) or first("claimed_amount", ("claim_form",))
+    description = first("incident_description", ("claim_form",))
     if claimant:
         claim.claimant_name = claimant
     if description:

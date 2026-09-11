@@ -12,6 +12,8 @@ from app.services.claim_service import (
     list_documents_for_claim,
     save_uploaded_document,
 )
+from app.models.domain import InsuranceProduct, Policy
+from app.models.audit_log import AuditLog
 from app.services.portal_service import actor
 
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -21,11 +23,23 @@ router = APIRouter(prefix="/claims", tags=["claims"])
 async def create_claim(payload: ClaimCreate, x_demo_user: int = Header(...), db: AsyncSession = Depends(get_db)):
     """Create an outpatient claim intake record."""
 
-    await actor(db, x_demo_user, {"customer"})
-    claim = await create_claim_record(payload, db)
-    claim.user_id = x_demo_user
-    await db.commit()
-    return claim
+    user = await actor(db, x_demo_user, {"customer"})
+    if payload.customer_policy_id is None:
+        raise HTTPException(422, "Select one of your active policies before creating a claim")
+    customer_policy = await db.get(Policy, payload.customer_policy_id)
+    if not customer_policy or customer_policy.user_id != user.id or customer_policy.status != "active":
+        raise HTTPException(403, "The selected active policy does not belong to this customer")
+    product = await db.get(InsuranceProduct, customer_policy.insurance_product_id)
+    if not product:
+        raise HTTPException(404, "Insurance product not found")
+    claim = Claim(user_id=user.id, customer_policy_id=customer_policy.id, insurance_product_id=product.id,
+        claimant_name=user.full_name, policy_number=customer_policy.policy_number,
+        claim_type="medical" if product.product_type == "health" else product.product_type,
+        policy_version=customer_policy.product_version, incident_date=payload.incident_date,
+        claimed_amount=payload.claimed_amount, currency=customer_policy.currency, status="waiting_for_documents", review_status="not_started")
+    db.add(claim); await db.flush(); claim.claim_number=f"CLM-{claim.id:06d}"
+    db.add(AuditLog(claim_id=claim.id, actor=user.email, user_id=user.id, actor_role=user.role, action="claim_created", entity_type="claim", entity_id=claim.id))
+    await db.commit(); await db.refresh(claim); return claim
 
 
 @router.post("/{claim_id}/documents", response_model=DocumentRead)
@@ -42,7 +56,7 @@ async def upload_document(
     claim = await get_claim_or_404(claim_id, db)
     if user.role == "customer" and claim.user_id != user.id:
         raise HTTPException(status_code=404, detail="Claim not found")
-    return await save_uploaded_document(claim_id, doc_type, file, db)
+    return await save_uploaded_document(claim_id, doc_type, file, db, uploaded_by_user_id=user.id)
 
 
 @router.post("/{claim_id}/demo-complete")

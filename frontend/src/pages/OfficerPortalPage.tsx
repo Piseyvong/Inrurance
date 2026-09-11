@@ -62,7 +62,7 @@ export function OfficerPortalPage() {
                 {claims.map((claim) => (
                   <tr key={claim.id}>
                     <td data-label="Claim ID">
-                      <Link className="claimIdLink" to={`/officer/claims/${claim.id}/review`}>
+                      <Link className="claimIdLink" to={`/officer/claims/${claim.id}`}>
                         #{claim.id}
                       </Link>
                     </td>
@@ -75,7 +75,7 @@ export function OfficerPortalPage() {
                       <time dateTime={claim.created_at ?? undefined}>{formatDateTime(claim.created_at)}</time>
                     </td>
                     <td data-label="Actions">
-                      <Link className="tableAction" to={`/officer/claims/${claim.id}/review`}>
+                      <Link className="tableAction" to={`/officer/claims/${claim.id}`}>
                         <UserCheckIcon size={14} />
                         Review
                         <ArrowRightIcon size={14} />

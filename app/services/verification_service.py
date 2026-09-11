@@ -20,11 +20,15 @@ from app.models.document import Document
 from app.models.extracted_field import ExtractedField
 from app.models.ocr_run import OCRRun
 from app.models.rule_result import RuleResult
-from app.services.policy_service import document_completeness, get_policy
+from app.services.policy_service import document_completeness, get_policy_for_claim
 from app.services.processing_log import record_processing_result
 from app.services.ocr import confidence_threshold_for_engine
 
 HUMAN_REVIEW_RESULTS = {"mismatch", "missing", "unclear"}
+
+
+def _field_value(field: ExtractedField | None) -> str | None:
+    return (field.officer_corrected_value or field.normalized_value or field.field_value) if field else None
 
 
 async def run_verification(claim_id: int, db: AsyncSession) -> dict[str, object]:
@@ -40,7 +44,7 @@ async def run_verification(claim_id: int, db: AsyncSession) -> dict[str, object]
     if claim is None:
         raise HTTPException(status_code=404, detail="Claim not found")
 
-    policy = await get_policy(db, claim.claim_type)
+    policy = await get_policy_for_claim(db, claim)
     document_result = await db.execute(select(Document).where(Document.claim_id == claim_id))
     documents = list(document_result.scalars().all())
     extracted_fields = await _latest_extracted_fields(db, documents)
@@ -75,6 +79,7 @@ async def run_verification(claim_id: int, db: AsyncSession) -> dict[str, object]
 
     rule_specs.extend(_required_field_rules(extracted_fields, policy))
     rule_specs.extend(_comparison_rules(extracted_fields, policy))
+    rule_specs.extend(_chronology_rules(extracted_fields))
     rule_specs.extend(_policy_value_rules(claim, extracted_fields, policy))
 
     reasons = [name for name, result, _details in rule_specs if result in HUMAN_REVIEW_RESULTS]
@@ -123,9 +128,10 @@ async def run_verification(claim_id: int, db: AsyncSession) -> dict[str, object]
             covered=True, documents_complete=completeness["is_complete"], fields_valid=not reasons,
             risk_band=risk["band"],
         )
+        claim.review_status = "review_completed" if claim.status == "auto_approved" else "needs_review"
         audit_action = "auto_approved" if auto_approved else "verification_completed"
         reasoning = {"decision": claim.status, "policy_type": claim.claim_type, "policy_version": policy["version"], "reasons": sorted(set(reasons)), "compliance_score_pending": True}
-        db.add(AuditLog(claim_id=claim.id, actor="rules_engine", action=audit_action, details=json.dumps(reasoning)))
+        db.add(AuditLog(claim_id=claim.id, actor="rules_engine", actor_role="system", action=audit_action, entity_type="claim", entity_id=claim.id, new_value=claim.status, details=json.dumps(reasoning)))
         await db.commit()
         for rule in stored_rules:
             await db.refresh(rule)
@@ -151,7 +157,7 @@ async def build_verification_report(
     claim = await db.get(Claim, claim_id)
     if claim is None:
         raise HTTPException(status_code=404, detail="Claim not found")
-    policy = await get_policy(db, claim.claim_type)
+    policy = await get_policy_for_claim(db, claim)
     document_result = await db.execute(
         select(Document).where(Document.claim_id == claim_id).order_by(Document.id.asc())
     )
@@ -173,6 +179,9 @@ async def build_verification_report(
     if reasons is None:
         reasons = [rule.rule_name for rule in rules if rule.result in HUMAN_REVIEW_RESULTS]
     latest_ocr_runs = await _latest_ocr_by_document(db, documents)
+    if latest_ocr_runs:
+        latest_ids = {document_id: run.id for document_id, run in latest_ocr_runs.items()}
+        fields = [field for field in fields if field.document_id not in latest_ids or field.ocr_run_id == latest_ids[field.document_id]]
     return {
         "claim_id": claim.id,
         "claim_status": claim.status,
@@ -219,6 +228,8 @@ async def list_officer_claims(db: AsyncSession, status: str | None = "human_revi
     query = select(Claim)
     if status:
         query = query.where(Claim.status == status)
+    else:
+        query = query.where(Claim.status.in_(["human_review_required", "pending_human_review", "needs_review", "under_officer_review", "more_information_required", "risk_review"]))
     result = await db.execute(query.order_by(Claim.created_at.desc(), Claim.id.desc()))
     return list(result.scalars().all())
 
@@ -226,11 +237,13 @@ async def list_officer_claims(db: AsyncSession, status: str | None = "human_revi
 async def _latest_extracted_fields(db: AsyncSession, documents: list[Document]) -> dict[str, dict[str, ExtractedField]]:
     by_doc_type: dict[str, dict[str, ExtractedField]] = defaultdict(dict)
     for document in documents:
-        result = await db.execute(
-            select(ExtractedField)
-            .where(ExtractedField.document_id == document.id)
-            .order_by(ExtractedField.created_at.desc(), ExtractedField.id.desc())
-        )
+        latest_ocr = (await db.execute(
+            select(OCRRun).where(OCRRun.document_id == document.id).order_by(OCRRun.started_at.desc(), OCRRun.id.desc())
+        )).scalars().first()
+        query = select(ExtractedField).where(ExtractedField.document_id == document.id)
+        if latest_ocr:
+            query = query.where(ExtractedField.ocr_run_id == latest_ocr.id)
+        result = await db.execute(query.order_by(ExtractedField.created_at.desc(), ExtractedField.id.desc()))
         fields = result.scalars().all()
         for field in fields:
             by_doc_type[document.doc_type].setdefault(field.field_name, field)
@@ -257,24 +270,18 @@ def _required_field_rules(fields: dict[str, dict[str, ExtractedField]], policy: 
     for doc_type, field_names in required_by_doc.items():
         for field_name in field_names:
             field = fields.get(doc_type, {}).get(field_name)
-            if field is None or not field.field_value:
+            value = _field_value(field)
+            if field is None or not value:
                 rules.append((f"required_field_{doc_type}_{field_name}", "missing", {"doc_type": doc_type, "field_name": field_name}))
-            elif field.validation_status == "unclear":
-                rules.append((f"required_field_{doc_type}_{field_name}", "unclear", {"value": field.field_value}))
+            elif (field.validation_status or "").upper() in {"UNCLEAR", "CONFLICTING"}:
+                rules.append((f"required_field_{doc_type}_{field_name}", "unclear", {"value": value}))
             else:
-                rules.append((f"required_field_{doc_type}_{field_name}", "match", {"value": field.field_value}))
+                rules.append((f"required_field_{doc_type}_{field_name}", "match", {"value": value}))
     policy_number = fields.get("claim_form", {}).get("policy_number")
-    if policy_number and policy_number.field_value:
-        result = "match" if re.fullmatch(r"[A-Za-z0-9-]{3,50}", policy_number.field_value) else "mismatch"
-        rules.append(("policy_number_format", result, {"value": policy_number.field_value}))
+    if _field_value(policy_number):
+        result = "match" if re.fullmatch(r"[A-Za-z0-9-]{3,50}", _field_value(policy_number) or "") else "mismatch"
+        rules.append(("policy_number_format", result, {"value": _field_value(policy_number)}))
     return rules
-
-
-REQUIRED_FIELDS_BY_DOC = {
-    "claim_form": ["claimant_name", "policy_number", "incident_date", "claimed_amount"],
-    "medical_report": ["claimant_name", "incident_date", "diagnosis"],
-    "receipt": ["total_amount"],
-}
 
 
 def _evidence_review_summary(
@@ -337,7 +344,7 @@ def _document_review_score(
     valid_required_fields = {
         field.field_name
         for field in fields
-        if field.field_name in required_fields and field.field_value and field.validation_status != "unclear"
+        if field.field_name in required_fields and _field_value(field) and (field.validation_status or "").upper() not in {"UNCLEAR", "CONFLICTING", "MISSING", "NOT_APPLICABLE"}
     }
     required_count = len(required_fields)
     field_score = (len(valid_required_fields) / required_count) * 70 if required_count else 70
@@ -360,28 +367,99 @@ def _document_review_score(
 
 
 def _comparison_rules(fields: dict[str, dict[str, ExtractedField]], policy: dict) -> list[tuple[str, str, dict[str, object]]]:
-    comparisons = []
-    document_types = [item["type"] for item in policy["required_documents"]]
-    for field_name in ("claimant_name", "policy_number", "incident_date", "claim_amount", "currency"):
-        refs = [(doc_type, field_name) for doc_type in document_types if fields.get(doc_type, {}).get(field_name) and fields[doc_type][field_name].field_value]
-        comparisons.extend((f"consistent_{field_name}_{refs[0][0]}_vs_{ref[0]}", refs[0], ref) for ref in refs[1:])
+    comparisons: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
+    identity_refs = [
+        ("claim_form", "claimant_name"), ("medical_report", "patient_name"),
+        ("invoice", "patient_name"), ("medical_invoice", "patient_name"), ("receipt", "patient_name"),
+    ]
+    present_identities = [ref for ref in identity_refs if _field_value(fields.get(ref[0], {}).get(ref[1]))]
+    if present_identities:
+        comparisons.extend((f"consistent_identity_{present_identities[0][0]}_vs_{ref[0]}", present_identities[0], ref) for ref in present_identities[1:])
+
+    incident_refs = [("claim_form", "incident_date"), ("incident_report", "incident_date"), ("medical_report", "reported_incident_date"), ("invoice", "reported_incident_date"), ("medical_invoice", "reported_incident_date"), ("receipt", "reported_incident_date")]
+    present_incidents = [ref for ref in incident_refs if _field_value(fields.get(ref[0], {}).get(ref[1]))]
+    if present_incidents:
+        comparisons.extend((f"consistent_reported_incident_{present_incidents[0][0]}_vs_{ref[0]}", present_incidents[0], ref) for ref in present_incidents[1:])
+
+    for field_name in ("policy_number", "currency"):
+        refs = [(doc_type, field_name) for doc_type in fields if _field_value(fields.get(doc_type, {}).get(field_name))]
+        if refs:
+            comparisons.extend((f"consistent_{field_name}_{refs[0][0]}_vs_{ref[0]}", refs[0], ref) for ref in refs[1:])
+
+    claim_amount_ref = next((ref for ref in (("claim_form", "claim_amount"), ("claim_form", "claimed_amount")) if _field_value(fields.get(ref[0], {}).get(ref[1]))), None)
+    if claim_amount_ref:
+        for ref in (("invoice", "total_amount"), ("medical_invoice", "total_amount"), ("receipt", "total_amount")):
+            if _field_value(fields.get(ref[0], {}).get(ref[1])):
+                comparisons.append((f"claimed_amount_vs_{ref[0]}_total", claim_amount_ref, ref))
     rules = []
     for rule_name, left_ref, right_ref in comparisons:
         left = fields.get(left_ref[0], {}).get(left_ref[1])
         right = fields.get(right_ref[0], {}).get(right_ref[1])
-        if left is None or not left.field_value or right is None or not right.field_value:
+        if not _field_value(left) or not _field_value(right):
             rules.append((rule_name, "missing", {"left": _value_details(left), "right": _value_details(right)}))
             continue
-        result = "match" if _normalise(left.field_value) == _normalise(right.field_value) else "mismatch"
+        result = "match" if _normalise(_field_value(left) or "") == _normalise(_field_value(right) or "") else "mismatch"
         rules.append((rule_name, result, {"left": _value_details(left), "right": _value_details(right)}))
     return rules
 
 
-def _claim_amount_for_auto_approval(claim: Claim, fields: dict[str, dict[str, ExtractedField]]) -> Decimal | None:
-    """Prefer the receipt total, falling back to the intake amount."""
+def _chronology_rules(fields: dict[str, dict[str, ExtractedField]]) -> list[tuple[str, str, dict[str, object]]]:
+    """Compare semantic dates after extraction without requiring equality."""
 
-    extracted_amounts = [doc.get("claim_amount") or doc.get("total_amount") or doc.get("claimed_amount") for doc in fields.values()]
-    for value in [*(field.field_value for field in extracted_amounts if field), claim.claimed_amount]:
+    claim_incident = fields.get("claim_form", {}).get("incident_date")
+    incident_value = _field_value(claim_incident)
+    if not incident_value:
+        return []
+    incident = _date_or_none(incident_value)
+    rules: list[tuple[str, str, dict[str, object]]] = []
+    if incident is None:
+        return [("chronology_incident_date", "unclear", {"value": incident_value})]
+
+    date_fields = (
+        ("medical_report", "consultation_date"), ("medical_report", "treatment_date"),
+        ("medical_report", "admission_date"), ("medical_report", "discharge_date"),
+        ("medical_invoice", "service_date"), ("medical_invoice", "visit_date"),
+        ("receipt", "service_date"), ("receipt", "visit_date"),
+        ("invoice", "service_date"), ("invoice", "visit_date"),
+    )
+    service_dates: list[tuple[str, str, date]] = []
+    for doc_type, field_name in date_fields:
+        value = _field_value(fields.get(doc_type, {}).get(field_name))
+        if not value:
+            continue
+        parsed = _date_or_none(value)
+        result = "match" if parsed is not None and incident <= parsed else "mismatch" if parsed is not None else "unclear"
+        rules.append((f"chronology_incident_before_{doc_type}_{field_name}", result, {"incident_date": incident_value, field_name: value}))
+        if parsed is not None:
+            service_dates.append((doc_type, field_name, parsed))
+
+    for doc_type in ("medical_invoice", "receipt", "invoice"):
+        invoice_value = _field_value(fields.get(doc_type, {}).get("invoice_date"))
+        if not invoice_value:
+            continue
+        invoice_date = _date_or_none(invoice_value)
+        matching_services = [item for item in service_dates if item[0] == doc_type]
+        for _, field_name, service_date in matching_services:
+            result = "match" if invoice_date is not None and service_date <= invoice_date else "mismatch" if invoice_date is not None else "unclear"
+            rules.append((f"chronology_{doc_type}_{field_name}_before_invoice", result, {field_name: service_date.isoformat(), "invoice_date": invoice_value}))
+    return rules
+
+
+def _date_or_none(value: str) -> date | None:
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d %B %Y", "%d %b %Y"):
+        try:
+            return datetime.strptime(value.strip(), pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _claim_amount_for_auto_approval(claim: Claim, fields: dict[str, dict[str, ExtractedField]]) -> Decimal | None:
+    """Use only the amount actually claimed, never an invoice total surrogate."""
+
+    claim_form = fields.get("claim_form", {})
+    extracted_amount = claim_form.get("claim_amount") or claim_form.get("claimed_amount")
+    for value in (_field_value(extracted_amount), claim.claimed_amount):
         parsed = _decimal_or_none(value)
         if parsed is not None:
             return parsed
@@ -394,29 +472,29 @@ def _policy_value_rules(claim: Claim, fields: dict[str, dict[str, ExtractedField
     max_age_days = policy.get("validation_rules", {}).get("maximum_document_age_days")
     for doc_type, document_fields in fields.items():
         currency = document_fields.get("currency")
-        if currency and currency.field_value and policy.get("validation_rules", {}).get("require_currency_match", True):
-            result = "match" if currency.field_value.upper() == expected_currency else "mismatch"
-            rules.append((f"currency_{doc_type}", result, {"expected": expected_currency, "actual": currency.field_value.upper()}))
+        if _field_value(currency) and policy.get("validation_rules", {}).get("require_currency_match", True):
+            result = "match" if (_field_value(currency) or "").upper() == expected_currency else "mismatch"
+            rules.append((f"currency_{doc_type}", result, {"expected": expected_currency, "actual": (_field_value(currency) or "").upper()}))
         for amount_name in ("claim_amount", "total_amount", "claimed_amount"):
             amount = document_fields.get(amount_name)
-            if amount and amount.field_value:
-                parsed = _decimal_or_none(amount.field_value)
-                rules.append((f"valid_amount_{doc_type}_{amount_name}", "match" if parsed is not None and parsed > 0 else "mismatch", {"value": amount.field_value}))
-        for date_name in ("incident_date", "service_date"):
+            if _field_value(amount):
+                parsed = _decimal_or_none(_field_value(amount))
+                rules.append((f"valid_amount_{doc_type}_{amount_name}", "match" if parsed is not None and parsed > 0 else "mismatch", {"value": _field_value(amount)}))
+        for date_name in ("incident_date", "reported_incident_date", "consultation_date", "treatment_date", "admission_date", "discharge_date", "service_date", "visit_date", "invoice_date", "payment_date"):
             date_field = document_fields.get(date_name)
-            if date_field and date_field.field_value:
+            if _field_value(date_field):
                 try:
-                    parsed_date = date.fromisoformat(date_field.field_value)
+                    parsed_date = date.fromisoformat(_field_value(date_field) or "")
                     age = (date.today() - parsed_date).days
                     valid = age >= 0 and (max_age_days is None or age <= int(max_age_days))
-                    rules.append((f"valid_date_{doc_type}_{date_name}", "match" if valid else "mismatch", {"value": date_field.field_value, "age_days": age, "maximum_age_days": max_age_days}))
+                    rules.append((f"valid_date_{doc_type}_{date_name}", "match" if valid else "mismatch", {"value": _field_value(date_field), "age_days": age, "maximum_age_days": max_age_days}))
                 except ValueError:
-                    rules.append((f"valid_date_{doc_type}_{date_name}", "unclear", {"value": date_field.field_value, "reason": "invalid_date_format"}))
+                    rules.append((f"valid_date_{doc_type}_{date_name}", "unclear", {"value": _field_value(date_field), "reason": "invalid_date_format"}))
         for field_name, expected in (("claimant_name", claim.claimant_name), ("policy_number", claim.policy_number)):
             field = document_fields.get(field_name)
-            if expected and field and field.field_value:
-                result = "match" if _normalise(field.field_value) == _normalise(str(expected)) else "mismatch"
-                rules.append((f"claim_{field_name}_{doc_type}", result, {"claim": str(expected), "document": field.field_value}))
+            if expected and _field_value(field):
+                result = "match" if _normalise(_field_value(field) or "") == _normalise(str(expected)) else "mismatch"
+                rules.append((f"claim_{field_name}_{doc_type}", result, {"claim": str(expected), "document": _field_value(field)}))
     return rules
 
 
@@ -439,6 +517,6 @@ def _value_details(field: ExtractedField | None) -> dict[str, object] | None:
     return {
         "document_id": field.document_id,
         "field_name": field.field_name,
-        "field_value": field.field_value,
+        "field_value": _field_value(field),
         "supporting_line_refs": field.supporting_line_refs,
     }

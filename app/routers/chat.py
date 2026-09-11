@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models.claim import Claim
 from app.models.domain import ConsultationRequest, InsuranceProduct, Policy, PolicyRule, User
 from app.config import get_settings
+from app.services.policy_document_service import retrieve_policy_evidence
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -27,6 +28,7 @@ async def chat_with_guide(payload: GuideChatRequest, x_demo_user: int | None = H
             "ខ្ញុំមាន policy", "policy របស់ខ្ញុំ", "claim របស់ខ្ញុំ", "វិក្កយបត្ររបស់ខ្ញុំ", "អាច claim", "ឯកសាររបស់ខ្ញុំ",
         )
         context = None
+        policy_product_ids: list[int] | None = None
         if x_demo_user:
             user = await db.get(User, x_demo_user)
             if user and user.role == "customer":
@@ -36,15 +38,20 @@ async def chat_with_guide(payload: GuideChatRequest, x_demo_user: int | None = H
                 context = f"Customer: {user.full_name}. Policies: " + "; ".join(f"{p.policy_number}, {product.name}, status {p.status}, version {p.product_version}" for p,product in policies)
                 context += ". Claims: " + "; ".join(f"#{c.id} {c.claim_type} status {c.status}" for c in claims)
                 product_ids = [product.id for _, product in policies]
+                policy_product_ids = product_ids
                 rules = list((await db.execute(select(PolicyRule).where(PolicyRule.insurance_product_id.in_(product_ids), PolicyRule.status == "confirmed"))).scalars()) if product_ids else []
                 context += ". Confirmed clauses/rules: " + "; ".join(f"{r.name}: {r.configuration} ({r.clause_reference or 'configured rule'})" for r in rules)
         if mode == "guest":
             if any(marker in payload.message.lower() for marker in personal_markers):
                 return GuideChatResponse(reply="I can explain the claim process generally, but I need you to sign in before checking a hospital bill, policy, or personal claim. Select Sign in to continue securely.", mode="guest", actions=[{"type":"link","label":"Sign in to continue","href":"/login"}])
             products = list((await db.execute(select(InsuranceProduct).where(InsuranceProduct.active.is_(True)))).scalars())
+            policy_product_ids = [product.id for product in products]
             settings = get_settings()
             contact = {"company_name": settings.company_name, "phone": settings.consultation_phone, "email": settings.consultation_email, "hours": settings.office_hours, "location": settings.office_location}
             context = "Configured public products: " + "; ".join(f"{p.name} ({p.product_type}): {p.description}" for p in products) + f". Configured company contact: {contact}."
+        policy_evidence = await retrieve_policy_evidence(db, payload.message, policy_product_ids)
+        if policy_evidence:
+            context = f"{context or ''}\n\nRetrieved policy evidence (authoritative; cite its policy and section):\n{policy_evidence}"
         lower = payload.message.lower()
         if any(term in lower for term in ("consultation", "book", "speak with", "ជួប", "ពិគ្រោះ")):
             actions.append({"type":"consultation","label":"Request a consultation","href":"#consultation"})

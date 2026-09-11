@@ -27,6 +27,8 @@ class OCRRunRead(BaseModel):
     engine_version: str | None
     status: str
     raw_text: str | None
+    cleaned_text: str | None = None
+    language: str = "khm+eng"
     result_json: str | None
     average_confidence: Decimal | None
     error_message: str | None

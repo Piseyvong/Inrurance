@@ -10,7 +10,7 @@ from app.models.audit_log import AuditLog
 from app.models.claim import Claim
 from app.models.document import Document
 from app.models.extracted_field import ExtractedField
-from app.models.domain import ClaimCheck, Decision, InsuranceProduct, Policy, PolicyRule, User
+from app.models.domain import ClaimCheck, Decision, InsuranceProduct, Policy, PolicyDocument, PolicyRule, User
 
 
 def password_hash(value: str) -> str:
@@ -41,28 +41,55 @@ async def actor(db: AsyncSession, user_id: int, roles: set[str] | None = None) -
 
 
 async def seed_demo(db: AsyncSession) -> dict:
-    existing = (await db.execute(select(User).where(User.email == "customer@demo.insure"))).scalar_one_or_none()
-    if existing:
-        return {"seeded": False, "customer_email": existing.email, "password": "demo123"}
-    customer = User(email="customer@demo.insure", password_hash=password_hash("demo123"), full_name="Sok Pisey", role="customer")
-    officer = User(email="officer@demo.insure", password_hash=password_hash("demo123"), full_name="Dara Claims", role="officer")
-    admin = User(email="admin@demo.insure", password_hash=password_hash("demo123"), full_name="Maly Admin", role="admin")
-    db.add_all([customer, officer, admin]); await db.flush()
-    product = InsuranceProduct(code="HEALTH-STANDARD", name="Health Standard 2026", product_type="health", version=1,
-        description="Outpatient and hospital benefits with human review safeguards.", effective_from=date(2026, 1, 1))
-    motor = InsuranceProduct(code="MOTOR-ESSENTIAL", name="Motor Essential 2026", product_type="motor", version=1,
-        description="Private motor accident and damage protection.", effective_from=date(2026, 1, 1))
-    db.add_all([product, motor]); await db.flush()
-    db.add_all([
-        PolicyRule(insurance_product_id=product.id, rule_type="documents", name="Required health documents", configuration={"required":["claim_form","medical_report","receipt"]}, clause_reference="Claims clause 4.1"),
-        PolicyRule(insurance_product_id=product.id, rule_type="workflow", name="Automatic approval threshold", configuration={"amount":50,"currency":"USD"}, clause_reference="Workflow rule AP-01"),
-        PolicyRule(insurance_product_id=product.id, rule_type="coverage", name="Health claim types", configuration={"covered":["health_outpatient","health_inpatient"],"waiting_period_days":30}, clause_reference="Benefits clauses 2.1–2.4"),
-        PolicyRule(insurance_product_id=product.id, rule_type="benchmark", name="Medical billing benchmarks", configuration={"consultation":25,"lab_test":20,"room_per_day":45}, clause_reference="Schedule of benefits"),
-    ])
-    db.add(Policy(policy_number="POL-HEALTH-2026-001", user_id=customer.id, insurance_product_id=product.id, product_version=1,
-        status="active", start_date=date(2026,1,1), end_date=date(2026,12,31)))
+    created = False
+    users = {}
+    for email, full_name, role in [
+        ("customer@demo.insure", "Sok Dara", "customer"),
+        ("officer@demo.insure", "Dara Claims", "officer"),
+        ("admin@demo.insure", "Maly Admin", "admin"),
+    ]:
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if not user:
+            user = User(email=email, password_hash=password_hash("demo123"), full_name=full_name, role=role)
+            db.add(user); await db.flush(); created = True
+        users[role] = user
+
+    product_specs = [
+        ("HEALTH-STANDARD", "Health Standard 2026", "health", "Outpatient and hospital benefits with human review safeguards."),
+        ("MOTOR-ESSENTIAL", "Motor Essential 2026", "motor", "Private motor accident and damage protection."),
+        ("ACCIDENT-PLUS", "Personal Accident Plus 2026", "personal_accident", "Personal accident evidence and benefit review."),
+        ("LIFE-SECURE", "Secure Life 2026", "life", "Life protection with officer-reviewed claims."),
+    ]
+    products = {}
+    for code, name, product_type, description in product_specs:
+        product = (await db.execute(select(InsuranceProduct).where(InsuranceProduct.code == code, InsuranceProduct.version == 1))).scalar_one_or_none()
+        if not product:
+            product = InsuranceProduct(code=code, name=name, product_type=product_type, version=1, description=description, effective_from=date(2026, 1, 1))
+            db.add(product); await db.flush(); created = True
+        products[product_type] = product
+
+    health = products["health"]
+    has_health_rules = (await db.execute(select(PolicyRule).where(PolicyRule.insurance_product_id == health.id))).scalars().first()
+    if not has_health_rules:
+        db.add_all([
+            PolicyRule(insurance_product_id=health.id, rule_type="documents", name="Required health documents", configuration={"required":["claim_form","medical_report","invoice"]}, clause_reference="Claims clause 4.1"),
+            PolicyRule(insurance_product_id=health.id, rule_type="workflow", name="Automatic approval threshold", configuration={"amount":50,"currency":"USD"}, clause_reference="Workflow rule AP-01"),
+            PolicyRule(insurance_product_id=health.id, rule_type="coverage", name="Health claim types", configuration={"covered":["health_outpatient","health_inpatient"]}, clause_reference="Benefits clauses 2.1–2.4"),
+        ])
+    customer = users["customer"]
+    issued = [
+        ("HLT-2026-000123", health, Decimal("5000"), Decimal("0")),
+        ("ACC-2026-000456", products["personal_accident"], Decimal("25000"), Decimal("0")),
+    ]
+    for number, product, limit, deductible in issued:
+        existing_policy = (await db.execute(select(Policy).where(Policy.policy_number == number))).scalar_one_or_none()
+        active_template = (await db.execute(select(PolicyDocument).where(PolicyDocument.insurance_product_id == product.id, PolicyDocument.status == "active").order_by(PolicyDocument.created_at.desc()))).scalars().first()
+        if not existing_policy:
+            db.add(Policy(policy_number=number, user_id=customer.id, insurance_product_id=product.id, policy_template_id=active_template.id if active_template else None, product_version=product.version, status="active", start_date=date(2026,1,1), end_date=date(2026,12,31), coverage_limit=limit, deductible=deductible, currency="USD")); created = True
+        elif active_template and not existing_policy.policy_template_id:
+            existing_policy.policy_template_id = active_template.id; created = True
     await db.commit()
-    return {"seeded": True, "customer_email": customer.email, "officer_email": officer.email, "admin_email": admin.email, "password": "demo123"}
+    return {"seeded": created, "customer_email": customer.email, "officer_email": users["officer"].email, "admin_email": users["admin"].email, "password": "demo123"}
 
 
 async def screen_risk(claim: Claim, db: AsyncSession) -> dict:

@@ -23,7 +23,7 @@ from app.services.document_policy import (
     detect_file_type,
     sanitize_filename,
 )
-from app.services.policy_service import document_completeness, get_policy, required_types
+from app.services.policy_service import document_completeness, get_policy, get_policy_for_claim, required_types
 
 
 QUICK_DEMO_FILENAMES = {
@@ -121,7 +121,7 @@ async def build_claim_response(claim: Claim, db: AsyncSession) -> dict[str, obje
     """Return claim data with document completeness fields."""
 
     documents = list(claim.documents)
-    policy = await get_policy(db, claim.claim_type)
+    policy = await get_policy_for_claim(db, claim)
     completeness = document_completeness(policy, {document.doc_type for document in documents})
     return {
         "id": claim.id,
@@ -158,6 +158,7 @@ async def save_uploaded_document(
     upload: UploadFile,
     db: AsyncSession,
     settings: Settings | None = None,
+    uploaded_by_user_id: int | None = None,
 ) -> Document:
     """Validate, store, and audit one uploaded claim document.
 
@@ -168,7 +169,7 @@ async def save_uploaded_document(
 
     settings = settings or get_settings()
     claim = await get_claim_or_404(claim_id, db)
-    policy = await get_policy(db, claim.claim_type)
+    policy = await get_policy_for_claim(db, claim)
 
     if doc_type not in required_types(policy):
         raise HTTPException(status_code=400, detail=f"Document type '{doc_type}' is not configured for this policy")
@@ -226,8 +227,10 @@ async def save_uploaded_document(
 
         document = Document(
             claim_id=claim.id,
+            uploaded_by_user_id=uploaded_by_user_id,
             doc_type=doc_type,
             original_filename=safe_filename,
+            stored_filename=saved_path.name,
             file_path=str(saved_path),
             mime_type=mime_type,
             file_size=total_size,
@@ -239,6 +242,9 @@ async def save_uploaded_document(
             AuditLog(
                 claim_id=claim.id,
                 actor="system",
+                user_id=uploaded_by_user_id,
+                entity_type="document",
+                entity_id=document.id,
                 action="document_uploaded",
                 details=doc_type,
             )

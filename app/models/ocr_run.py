@@ -22,6 +22,8 @@ class OCRRun(Base):
     engine_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleaned_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str] = mapped_column(String(30), default="khm+eng")
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     average_confidence: Mapped[Numeric] = mapped_column(Numeric(5, 4), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
