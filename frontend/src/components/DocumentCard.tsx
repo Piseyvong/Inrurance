@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DocumentRecord, DocumentType, OCRRun } from "../types/api";
+import type { DocumentRecord, DocumentType } from "../types/api";
 import { getDocumentPreview } from "../api/documents";
 import { ACCEPTED_FILE_TYPES, formatBytes, isAcceptedFile } from "../utils/documents";
 import { StatusBadge } from "./StatusBadge";
@@ -9,15 +9,12 @@ interface DocumentCardProps {
   title: string;
   description: string;
   document?: DocumentRecord;
-  ocrRun?: OCRRun;
   selectedFile?: File;
   busy?: boolean;
-  extractionStatus?: string;
+  processing?: boolean;
   error?: string;
   onSelectFile: (docType: DocumentType, file: File | null) => void;
   onUpload: (docType: DocumentType) => void;
-  onProcess: (document: DocumentRecord) => void;
-  onExtract: (document: DocumentRecord) => void;
 }
 
 /**
@@ -29,15 +26,12 @@ export function DocumentCard({
   title,
   description,
   document,
-  ocrRun,
   selectedFile,
   busy,
-  extractionStatus,
+  processing,
   error,
   onSelectFile,
-  onUpload,
-  onProcess,
-  onExtract
+  onUpload
 }: DocumentCardProps) {
   const received = Boolean(document);
   const fileInvalid = selectedFile ? !isAcceptedFile(selectedFile) : false;
@@ -86,21 +80,12 @@ export function DocumentCard({
             Upload
           </button>
         </div>
-      ) : (
-        <div className="actionRow">
-          <button type="button" disabled={busy} onClick={() => onProcess(document!)}>
-            Process Document
-          </button>
-          <button type="button" disabled={busy || ocrRun?.status !== "succeeded"} onClick={() => onExtract(document!)}>
-            Extract Fields
-          </button>
-        </div>
-      )}
+      ) : <p className="sectionNote">{processing ? "Processing documents…" : "Received. Processing starts automatically when all required documents are uploaded."}</p>}
       <div className="statusGrid">
         <span>Processing</span>
-        <StatusBadge status={ocrRun?.status ?? "not started"} />
+        <StatusBadge status={processing ? "processing" : received ? "queued" : "not started"} />
         <span>Extraction</span>
-        <StatusBadge status={extractionStatus ?? "not started"} />
+        <StatusBadge status={processing ? "processing" : "not started"} />
       </div>
       {fileInvalid ? <p className="fieldError">Select a PDF, JPG, JPEG, or PNG file.</p> : null}
       {error ? <p className="fieldError">{error}</p> : null}

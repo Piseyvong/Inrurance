@@ -10,9 +10,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(128))
     full_name: Mapped[str] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(60))
     role: Mapped[str] = mapped_column(String(30), default="customer")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())
 
 
 class InsuranceProduct(Base):
@@ -29,6 +31,7 @@ class InsuranceProduct(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     effective_from: Mapped[Date | None] = mapped_column(Date)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())
 
 
 class PolicyRule(Base):
@@ -48,10 +51,62 @@ class Policy(Base):
     policy_number: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     insurance_product_id: Mapped[int] = mapped_column(ForeignKey("insurance_products.id"), index=True)
+    policy_template_id: Mapped[int | None] = mapped_column(ForeignKey("policy_documents.id"), index=True)
     product_version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(30), default="active")
     start_date: Mapped[Date] = mapped_column(Date)
     end_date: Mapped[Date] = mapped_column(Date)
+    coverage_limit: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    deductible: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())
+
+
+class PolicyDocument(Base):
+    """Versioned policy wording uploaded by an authorized officer."""
+
+    __tablename__ = "policy_documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    insurance_product_id: Mapped[int] = mapped_column(ForeignKey("insurance_products.id"), index=True)
+    policy_name: Mapped[str] = mapped_column(String(180))
+    product_category: Mapped[str] = mapped_column(String(50), index=True)
+    policy_code: Mapped[str] = mapped_column(String(80), index=True)
+    version: Mapped[str] = mapped_column(String(50))
+    effective_date: Mapped[Date] = mapped_column(Date)
+    expiry_date: Mapped[Date | None] = mapped_column(Date)
+    language: Mapped[str] = mapped_column(String(30), default="Khmer-English")
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    original_filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    file_path: Mapped[str] = mapped_column(String(500))
+    extracted_text: Mapped[str] = mapped_column(Text)
+    required_documents: Mapped[list] = mapped_column(JSON, default=list)
+    configured_rules: Mapped[dict] = mapped_column(JSON, default=dict)
+    uploaded_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PolicyChunk(Base):
+    """Searchable, auditable excerpt from one immutable policy document version."""
+
+    __tablename__ = "policy_chunks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    policy_document_id: Mapped[int] = mapped_column(ForeignKey("policy_documents.id", ondelete="CASCADE"), index=True)
+    section: Mapped[str | None] = mapped_column(String(255))
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class OfficerNote(Base):
+    __tablename__ = "officer_notes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id", ondelete="CASCADE"), index=True)
+    officer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    note: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())
 
 
 class ClaimCheck(Base):

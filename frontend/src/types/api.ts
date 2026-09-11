@@ -60,10 +60,17 @@ export interface DocumentRecord {
   claim_id: number;
   doc_type: DocumentType;
   original_filename: string | null;
-  file_path: string;
+  stored_filename?: string | null;
+  /** Legacy test fixture only; the API no longer returns internal paths. */
+  file_path?: string;
+  view_url?: string;
+  download_url?: string;
   mime_type: string | null;
   file_size: number | null;
   uploaded_at: string | null;
+  ocr_status?: string;
+  extraction_status?: string;
+  verification_status?: string;
 }
 
 export interface ClaimWithDocuments extends Claim {
@@ -97,8 +104,11 @@ export interface ExtractedField {
   ocr_run_id: number | null;
   field_name: string;
   field_value: string | null;
+  normalized_value?: string | null;
   confidence: string | number | null;
   supporting_line_refs: string | null;
+  source_text?: string | null;
+  semantic_reason?: string | null;
   extraction_method: string | null;
   validation_status: string | null;
   created_at: string | null;

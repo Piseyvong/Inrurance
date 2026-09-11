@@ -33,7 +33,7 @@ def prepare_pages_for_ocr(
 ) -> list[Path]:
     """Prepare a document for OCR and return one image path per page.
 
-    Kiri OCR expects image inputs, so callers can require PDF rendering to
+    Tesseract expects image inputs, so callers can require PDF rendering to
     succeed. Test and demo providers can still receive the original PDF when
     optional rendering tools are unavailable.
     """

@@ -1,17 +1,19 @@
-import { useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { useState, useSyncExternalStore } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { ComponentType, ReactNode } from "react";
 
 import {
   ClockIcon,
   CloseIcon,
   DashboardIcon,
+  LogInIcon,
+  LogOutIcon,
   MenuIcon,
   ShieldCheckIcon,
   UserCheckIcon
 } from "./icons";
 import { InsuranceAgentBubble } from "./InsuranceAgentBubble";
-import { session } from "../api/portal";
+import { clearSession, session, sessionHome, subscribeSession } from "../api/portal";
 
 interface AppShellProps {
   children: ReactNode;
@@ -23,28 +25,43 @@ interface NavItem {
   to?: string;
 }
 
-const navItems: NavItem[] = [
+const publicNavItems: NavItem[] = [
   { to: "/#agents", label: "AI Agents", Icon: DashboardIcon },
   { to: "/#workflow", label: "How It Works", Icon: ClockIcon },
   { to: "/#safeguards", label: "Safeguards", Icon: ShieldCheckIcon },
-  { to: "/login", label: "Sign in", Icon: UserCheckIcon }
+  { to: "/login", label: "Customer sign in", Icon: LogInIcon },
+  { to: "/login?role=officer", label: "Officer sign in", Icon: ShieldCheckIcon }
 ];
 
 const officerNavItems: NavItem[] = [
-  { to: "/officer", label: "Officer Portal", Icon: UserCheckIcon }
+  { to: "/officer", label: "Officer Portal", Icon: UserCheckIcon },
+  { to: "/admin/policies", label: "Policy Management", Icon: DashboardIcon }
+];
+
+const customerNavItems: NavItem[] = [
+  { to: "/portal", label: "My dashboard", Icon: DashboardIcon }
 ];
 
 export function AppShell({ children }: AppShellProps) {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
-  const authenticated = Boolean(session());
-  const activeNavItems = authenticated ? (location.pathname.startsWith("/officer") ? officerNavItems : []) : navItems;
+  const navigate = useNavigate();
+  useSyncExternalStore(subscribeSession, () => sessionStorage.getItem("insuranceSession"), () => null);
+  const currentSession = session();
+  const authenticated = Boolean(currentSession);
+  const activeNavItems = !currentSession ? publicNavItems : currentSession.role === "customer" ? customerNavItems : officerNavItems;
+
+  function logout() {
+    clearSession();
+    setNavOpen(false);
+    navigate("/", { replace: true });
+  }
 
   return (
     <div className="appShell">
       <header className="topBar">
         <div className="topBarInner">
-          <NavLink className="brand" to={authenticated ? "/portal" : "/"} aria-label="Insurance AI Agent home">
+          <NavLink className="brand" to={authenticated ? sessionHome(currentSession) : "/"} aria-label="Insurance AI Agent home">
             <div className="brandMark" aria-hidden="true">
               <ShieldCheckIcon size={22} />
             </div>
@@ -75,6 +92,7 @@ export function AppShell({ children }: AppShellProps) {
                 <span>{item.label}</span>
               </NavLink>
             ))}
+            {currentSession ? <button className="navLogout" type="button" onClick={logout} aria-label={`Log out ${currentSession.full_name}`}><LogOutIcon size={18}/><span>Logout</span></button> : null}
           </nav> : null}
         </div>
       </header>

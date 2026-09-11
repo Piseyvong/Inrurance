@@ -36,7 +36,7 @@ Default `.env`:
 
 ```text
 VITE_PORT=5175
-VITE_API_BASE_URL=http://127.0.0.1:8001
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 ## Backend Dependency
@@ -50,7 +50,7 @@ docker compose up -d
 .\.venv\Scripts\python.exe -m scripts.run_backend
 ```
 
-The sample backend `.env` uses `OCR_PROVIDER=kiri` for real Khmer-English OCR.
+The sample backend `.env` uses `OCR_PROVIDER=tesseract` for real Khmer-English OCR.
 Use `OCR_PROVIDER=demo_text` only for synthetic local walkthroughs.
 
 ## Demo Flow
@@ -85,6 +85,6 @@ npm run test
 
 - The frontend relies on the backend for authoritative validation.
 - Synthetic `demo_text` processing is not real Khmer OCR.
-- Kiri OCR quality and handwriting handling still need validation on more real documents.
+- Tesseract OCR quality and handwriting handling still need validation on more real documents.
 - Local file storage and synchronous processing are demo constraints.
 - No production authentication, role enforcement, malware scanning, or deployment hardening is included.

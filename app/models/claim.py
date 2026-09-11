@@ -16,6 +16,7 @@ class Claim(Base):
     __tablename__ = "claims"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    claim_number: Mapped[str | None] = mapped_column(String(40), unique=True, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     customer_policy_id: Mapped[int | None] = mapped_column(ForeignKey("policies.id"), nullable=True, index=True)
     insurance_product_id: Mapped[int | None] = mapped_column(ForeignKey("insurance_products.id"), nullable=True)
@@ -25,12 +26,15 @@ class Claim(Base):
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     incident_date: Mapped[Date | None] = mapped_column(Date, nullable=True)
     claimed_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="submitted")
+    review_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     risk_band: Mapped[str | None] = mapped_column(String(30), nullable=True)
     recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())
 
     documents = relationship("Document", back_populates="claim")
     rule_results = relationship("RuleResult", back_populates="claim")

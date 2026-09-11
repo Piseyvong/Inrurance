@@ -37,7 +37,11 @@ class Settings:
     processing_log_path: Path = Path(os.getenv("PROCESSING_LOG_PATH", "logs/processing_results.jsonl"))
     max_upload_bytes: int = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 
-    ocr_provider: str = os.getenv("OCR_PROVIDER", "kiri")
+    ocr_provider: str = os.getenv("OCR_PROVIDER", "tesseract")
+    tesseract_cmd: str | None = os.getenv("TESSERACT_CMD") or r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    tesseract_languages: str = os.getenv("TESSERACT_LANGUAGES", "khm+eng")
+    tesseract_tessdata_dir: Path = Path(os.getenv("TESSERACT_TESSDATA_DIR", "tessdata"))
+    ocr_postprocessing_enabled: bool = os.getenv("OCR_POSTPROCESSING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
     # Accept both the application's original variable names and the Azure
     # Foundry names shown in the portal. Secrets stay in the environment only.

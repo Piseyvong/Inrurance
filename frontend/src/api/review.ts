@@ -21,3 +21,7 @@ export function submitReview(claimId: number, payload: OfficerReviewPayload): Pr
     body: JSON.stringify(payload)
   });
 }
+
+export function getOfficerClaimWorkspace(claimId:number):Promise<any>{return apiRequest(`/officer/claims/${claimId}`);}
+export function addOfficerNote(claimId:number,note:string):Promise<any>{return apiRequest(`/officer/claims/${claimId}/notes`,{method:"POST",body:JSON.stringify({note})});}
+export async function getOfficerDocumentBlob(claimId:number,documentId:number,download=false):Promise<string>{const saved=JSON.parse(sessionStorage.getItem("insuranceSession")||"null");const base=import.meta.env.VITE_API_BASE_URL??"http://127.0.0.1:8000";const response=await fetch(`${base}/officer/claims/${claimId}/documents/${documentId}/${download?"download":"view"}`,{headers:{"X-Demo-User":String(saved?.user_id??"")}});if(!response.ok)throw new Error("Unable to open the authorized document.");return URL.createObjectURL(await response.blob());}

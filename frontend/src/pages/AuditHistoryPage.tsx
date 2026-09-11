@@ -6,6 +6,7 @@ import { PageHeader } from "../components/PageHeader";
 import { useClaimIdParam } from "../hooks/useClaimIdParam";
 import type { AuditLogEntry } from "../types/api";
 import { formatDateTime } from "../utils/documents";
+import { BackButton } from "../components/BackButton";
 
 export function AuditHistoryPage() {
   const claimId = useClaimIdParam();
@@ -26,7 +27,7 @@ export function AuditHistoryPage() {
 
   return (
     <div className="pageStack">
-      <PageHeader title={`Claim ${claimId} Audit History`} eyebrow="Audit Timeline" />
+      <PageHeader title={`Claim ${claimId} Audit History`} eyebrow="Audit Timeline"><BackButton to={`/officer/claims/${claimId}`} label="Claim review" /></PageHeader>
       {error ? <Alert tone="danger">{error}</Alert> : null}
       {!error && entries.length === 0 ? <Alert>No audit history found for this claim.</Alert> : null}
       <ol className="timeline">

@@ -6,10 +6,12 @@ import { Alert } from "../components/Alert";
 import { PageHeader } from "../components/PageHeader";
 import { ProgressTracker } from "../components/ProgressTracker";
 import { StatusBadge } from "../components/StatusBadge";
+import { BackButton } from "../components/BackButton";
+import { ExtractionField } from "../components/ExtractionField";
 import { useClaimIdParam } from "../hooks/useClaimIdParam";
 import type { ClaimWithDocuments, VerificationReport } from "../types/api";
 import { comparisonRules, groupFieldsByDocument, hasHumanReviewReasons } from "../utils/verification";
-import { documentLabel, formatDateTime, outcomeLabel, parseLineRefs } from "../utils/documents";
+import { documentLabel, formatDateTime, outcomeLabel } from "../utils/documents";
 
 function reviewReasonText(reason: string) {
   if (reason.startsWith("ocr_confidence_")) return `${documentLabel(reason.replace("ocr_confidence_", ""))} OCR confidence is below the 80% automatic-approval threshold.`;
@@ -57,18 +59,19 @@ export function VerificationPage() {
   const missingDocuments = claim?.missing_required_document_types ?? [];
   const canRunPrecheck = Boolean(claim && missingDocuments.length === 0);
   const extractedValue = (fieldName: string, preferredTypes: string[] = []) => {
-    const candidates = (report?.extracted_fields ?? []).filter((field) => field.field_name === fieldName && field.field_value && field.validation_status === "valid");
+    const candidates = (report?.extracted_fields ?? []).filter((field) => field.field_name === fieldName && (field.normalized_value || field.field_value) && ["VALID","CORRECTED"].includes((field.validation_status ?? "").toUpperCase()));
     for (const documentType of preferredTypes) {
       const document = report?.documents.find((item) => item.doc_type === documentType);
       const match = candidates.find((field) => field.document_id === document?.id);
-      if (match?.field_value) return match.field_value;
+      if (match?.normalized_value || match?.field_value) return match.normalized_value || match.field_value;
     }
-    return candidates[0]?.field_value ?? "Not found in extracted evidence";
+    return candidates[0]?.normalized_value ?? candidates[0]?.field_value ?? "Not found in extracted evidence";
   };
 
   return (
     <div className="pageStack">
       <PageHeader title={`Claim ${claimId} Verification`} eyebrow="Deterministic Verification">
+        <BackButton to={`/claims/${claimId}/documents`} label="Documents" />
         {approved ? <Link className="secondaryButton" to="/portal">Return to customer portal</Link> : <button type="button" onClick={verify} disabled={loading || !canRunPrecheck} title={!canRunPrecheck ? "Upload every required document before running the pre-check." : undefined}>
           {loading ? "Reading Documents..." : canRunPrecheck ? "Run Document AI Pre-Check" : "Upload documents to continue"}
         </button>}
@@ -137,15 +140,15 @@ export function VerificationPage() {
             <span>Claim ID</span>
             <strong>{claim.id}</strong>
             <span>Claimant</span>
-            <strong>{extractedValue("claimant_name", ["claim_form", "medical_report", "invoice"])}</strong>
+            <strong>{extractedValue("claimant_name", ["claim_form"])}</strong>
             <span>Policy</span>
             <strong>{extractedValue("policy_number", ["claim_form"])}</strong>
             <span>Incident Date</span>
             <strong>{extractedValue("incident_date", ["claim_form"])}</strong>
             <span>Claimed Amount</span>
-            <strong>{extractedValue("claim_amount", ["claim_form", "invoice"])}</strong>
+            <strong>{extractedValue("claim_amount", ["claim_form"])}</strong>
             <span>Medical Evidence</span>
-            <strong>{extractedValue("incident_description", ["medical_report"]) !== "Not found in extracted evidence" ? extractedValue("incident_description", ["medical_report"]) : extractedValue("diagnosis", ["medical_report"])}</strong>
+            <strong>{extractedValue("diagnosis", ["medical_report"])}</strong>
           </div>
         </section>
       ) : null}
@@ -157,7 +160,7 @@ export function VerificationPage() {
             <div key={document.id}>
               <span>{documentLabel(document.doc_type)}</span>
               <StatusBadge status="received" />
-              <span>{document.original_filename ?? document.file_path}</span>
+              <span>{document.original_filename ?? "Uploaded evidence"}</span>
             </div>
           ))}
         </div>
@@ -172,14 +175,8 @@ export function VerificationPage() {
         {report?.documents.map((document) => (
           <div className="evidenceGroup" key={document.id}>
             <h3>{documentLabel(document.doc_type)}</h3>
-            {(fieldsByDocument.get(document.id) ?? []).map((field) => (
-              <div className="fieldRow" key={field.id}>
-                <span>{field.field_name}</span>
-                <strong>{field.field_value || "Empty or unclear"}</strong>
-                <span>Confidence: {field.confidence ?? "Not available"}</span>
-                <span>Lines: {parseLineRefs(field.supporting_line_refs).join(", ") || "Not available"}</span>
-                <StatusBadge status={field.validation_status ?? "unclear"} />
-              </div>
+            {(fieldsByDocument.get(document.id) ?? []).filter((field) => (field.validation_status ?? "").toUpperCase() !== "NOT_APPLICABLE").map((field) => (
+              <ExtractionField key={field.id} name={field.field_name} value={field.field_value} normalizedValue={field.normalized_value} status={field.validation_status} confidence={field.confidence} extractionMethod={field.extraction_method} lineRefs={field.supporting_line_refs} source={field.source_text} interpretation={field.semantic_reason}/>
             ))}
           </div>
         ))}
