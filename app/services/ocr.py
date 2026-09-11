@@ -219,6 +219,8 @@ async def process_document(document_id: int, db: AsyncSession, provider: OCRProv
         # any further use of `db` (including plain attribute writes that
         # trigger autoflush) raises PendingRollbackError until this runs.
         await db.rollback()
+        await db.refresh(document)
+        await db.refresh(ocr_run)
         ocr_run.status = "failed"
         document.ocr_status = "failed"
         ocr_run.error_message = str(exc)
