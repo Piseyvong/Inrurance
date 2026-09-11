@@ -31,8 +31,11 @@ RUN pip install -r requirements.txt
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
-COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# scripts/ includes seed_demo.py and check_tables.py — run with
+# `docker compose ... exec backend python scripts/seed_demo.py`.
+COPY scripts ./scripts
+RUN cp scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # uploads/processed_uploads/logs are also mounted as volumes in compose so
 # files outlive container recreation; the mkdir here just keeps a plain

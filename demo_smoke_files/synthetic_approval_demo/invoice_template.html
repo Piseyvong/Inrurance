@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Demo Outpatient Invoice</title>
+<style>
+  @page { size: A4; margin: 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #000;
+    background: #fff;
+    margin: 0;
+    padding: 36px 44px;
+  }
+  .sample-banner {
+    text-align: center;
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: .04em;
+    border: 2px solid #000;
+    padding: 8px;
+    margin-bottom: 26px;
+  }
+  .letterhead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 4px solid #0d665b;
+    padding-bottom: 14px;
+    margin-bottom: 26px;
+  }
+  .letterhead .org {
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .letterhead .org small {
+    display: block;
+    font-weight: 500;
+    font-size: 12px;
+    color: #333;
+  }
+  .doc-title {
+    font-size: 28px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .01em;
+    margin: 0 0 26px;
+  }
+  table.field-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 19px;
+    margin-bottom: 22px;
+  }
+  table.field-table td {
+    padding: 12px 4px;
+    border-bottom: 1px solid #bbb;
+    vertical-align: top;
+  }
+  table.field-table td.label {
+    font-weight: 700;
+    width: 42%;
+  }
+  table.field-table td.value {
+    font-weight: 700;
+  }
+  table.field-table tr.total td {
+    border-top: 2px solid #000;
+    border-bottom: none;
+    font-size: 22px;
+    padding-top: 16px;
+  }
+  .footer-note {
+    margin-top: 40px;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+  <div class="sample-banner">SAMPLE — NOT VALID FOR INSURANCE USE</div>
+
+  <div class="letterhead">
+    <div class="org">
+      Boarey Family Clinic
+      <small>General Outpatient Services</small>
+    </div>
+    <div class="org" style="text-align:right">
+      Invoice
+      <small>Billing Department</small>
+    </div>
+  </div>
+
+  <h1 class="doc-title">Outpatient Invoice</h1>
+
+  <table class="field-table">
+    <tr><td class="label">Provider Name:</td><td class="value">Boarey Family Clinic</td></tr>
+    <tr><td class="label">Invoice Number:</td><td class="value">INV-2026-0142</td></tr>
+    <tr><td class="label">Patient Name:</td><td class="value">Chan Sopheak</td></tr>
+    <tr><td class="label">Policy Number:</td><td class="value">POL-DEMO-2026-014</td></tr>
+    <tr><td class="label">Service Date:</td><td class="value">2026-08-26</td></tr>
+    <tr><td class="label">Invoice Date:</td><td class="value">2026-08-28</td></tr>
+    <tr><td class="label">Currency:</td><td class="value">USD</td></tr>
+    <tr class="total"><td class="label">Total Amount:</td><td class="value">65.00</td></tr>
+  </table>
+
+  <div class="footer-note">Synthetic test record for local OCR and extraction testing only.</div>
+
+</body>
+</html>

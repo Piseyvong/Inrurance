@@ -79,6 +79,66 @@ The frontend reads `VITE_PORT` from `frontend/.env` (default `5175`; set it to
 `5173` if you need that port) and serves on `http://127.0.0.1:<VITE_PORT>`.
 Make sure the backend's `CORS_ORIGINS` includes that origin.
 
+## Production Deployment (VM)
+
+The production stack runs in Docker: Postgres + the FastAPI backend (with
+Tesseract and Poppler baked into the image) + the built React frontend served
+by nginx. The backend creates its own tables on startup, so there is no
+separate migration command, and Tesseract needs no install on the host.
+
+```bash
+# 1. Get the repo onto the VM and cd into it
+cd /path/to/Inrurance
+
+# 2. Create the production env file and fill in real values
+cp .env.production.example .env.production
+nano .env.production
+```
+
+Minimum values to set in `.env.production`:
+
+- `POSTGRES_PASSWORD` — a real database password (required).
+- `VITE_API_BASE_URL` — the backend's **public** address browsers reach,
+  e.g. `http://your-server-ip:8011` (required). This is compiled into the
+  frontend bundle at build time — changing it later requires a rebuild.
+- `CORS_ORIGINS` — the browser-facing frontend origin,
+  e.g. `http://your-server-ip:8086`.
+- `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_DEPLOYMENT`
+  — Azure OpenAI credentials for real extraction. Leave them blank and the
+  backend falls back to the local demo extractor.
+
+Note: keep `OCR_PROVIDER=tesseract` and do **not** set `TESSERACT_CMD` or
+`TESSERACT_TESSDATA_DIR` here — the backend image already points them at its
+own Linux Tesseract install, and Windows paths copied from a local `.env` will
+break OCR inside the container.
+
+Build and start:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+
+# Check status and logs
+docker compose -f docker-compose.prod.yml --env-file .env.production ps
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f backend
+
+# Confirm the LLM connection (reports Azure verified, or demo mode when no key)
+curl http://your-server-ip:8011/health/llm
+```
+
+Then open the frontend at `http://your-server-ip:8086`.
+
+Redeploy after a code change:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+One caveat: the example ports (`BACKEND_PUBLISHED_PORT=8011`,
+`FRONTEND_PUBLISHED_PORT=8086`) were chosen because ports 80 and 8000-8085
+were already in use on the target VM. Confirm with `docker ps` /
+`sudo ss -tlnp` before deploying, and if you change them, update
+`VITE_API_BASE_URL` and `CORS_ORIGINS` to match.
+
 ## Environment Variables
 
 - `BACKEND_HOST`, default `127.0.0.1`

@@ -1,12 +1,13 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { askInsuranceAgent, requestConsultation, type AgentAction, type ConsultationPayload } from "../api/chat";
+import { askInsuranceAgent, requestConsultation, type AgentAction, type ClaimStatusData, type ConsultationPayload, type DocumentChecklistItem, type PolicyInfoData, type StructuredData } from "../api/chat";
 import { session } from "../api/portal";
 import { ArrowRightIcon, CloseIcon, LayersIcon } from "./icons";
 
-type Message = { sender: "agent" | "user"; text: string; actions?: AgentAction[] };
+type Message = { sender: "agent" | "user"; text: string; actions?: AgentAction[]; structuredData?: StructuredData };
+
 const STORAGE_KEY = "insuranceAgentConversation";
-const GREETING: Message = { sender: "agent", text: "Hi — សួស្តី! I’m your Insurance AI Agent. How can I help you with insurance today?" };
+const GREETING: Message = { sender: "agent", text: "Hi — សួស្តី! I'm your Insurance AI Agent. How can I help you with insurance today?" };
 
 function savedMessages(): Message[] {
   try {
@@ -16,6 +17,237 @@ function savedMessages(): Message[] {
     // Start a new conversation if stored browser data is invalid.
   }
   return [GREETING];
+}
+
+// Status badge configuration
+const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
+  approved: { color: "#15803d", bg: "#dcfce7", label: "Approved" },
+  pending: { color: "#92400e", bg: "#fef3c7", label: "Pending" },
+  rejected: { color: "#b91c1c", bg: "#fee2e2", label: "Rejected" },
+  human_review_required: { color: "#1e40af", bg: "#dbeafe", label: "Under Review" },
+  waiting_for_documents: { color: "#6b21a8", bg: "#f3e8ff", label: "Awaiting Docs" },
+  processing: { color: "#0369a1", bg: "#e0f2fe", label: "Processing" },
+};
+
+function getStatusConfig(status: string) {
+  return STATUS_CONFIG[status] || { color: "#475569", bg: "#f1f5f9", label: status.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()) };
+}
+
+// Status Badge Component
+function StatusBadge({ status }: { status: string }) {
+  const config = getStatusConfig(status);
+  return (
+    <span className="statusBadge" style={{ background: config.bg, color: config.color }}>
+      {config.label}
+    </span>
+  );
+}
+
+// Document Checklist Component
+function DocumentChecklist({ documents }: { documents: DocumentChecklistItem[] }) {
+  if (!documents || documents.length === 0) return null;
+  return (
+    <div className="documentChecklist">
+      <strong>Required Documents:</strong>
+      <ul>
+        {documents.map((doc, i) => (
+          <li key={i} className={doc.submitted ? "submitted" : "pending"}>
+            <span className="checkIcon">{doc.submitted ? "✓" : "○"}</span>
+            <span>{doc.name}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Claim Status Card Component
+function ClaimStatusCard({ claim }: { claim: ClaimStatusData }) {
+  return (
+    <div className="claimStatusCard">
+      <div className="claimHeader">
+        <span className="claimId">#{claim.id}</span>
+        <StatusBadge status={claim.status} />
+      </div>
+      <div className="claimDetails">
+        <div className="detailRow">
+          <span className="label">Type</span>
+          <span className="value">{claim.claim_type}</span>
+        </div>
+        {claim.amount !== undefined && claim.amount !== null && (
+          <div className="detailRow">
+            <span className="label">Amount</span>
+            <span className="value">${claim.amount.toLocaleString()}</span>
+          </div>
+        )}
+      </div>
+      {claim.documents && <DocumentChecklist documents={claim.documents} />}
+      {claim.next_steps && claim.next_steps.length > 0 && (
+        <div className="nextSteps">
+          <strong>Next Steps:</strong>
+          <ul>
+            {claim.next_steps.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Policy Info Card Component
+function PolicyInfoCard({ policy }: { policy: PolicyInfoData }) {
+  return (
+    <div className="policyInfoCard">
+      <div className="policyHeader">
+        <span className="policyNumber">{policy.policy_number}</span>
+        <StatusBadge status={policy.status} />
+      </div>
+      <div className="policyDetails">
+        <div className="detailRow">
+          <span className="label">Product</span>
+          <span className="value">{policy.product_name}</span>
+        </div>
+        {policy.coverage_type && (
+          <div className="detailRow">
+            <span className="label">Coverage</span>
+            <span className="value">{policy.coverage_type}</span>
+          </div>
+        )}
+        {policy.end_date && (
+          <div className="detailRow">
+            <span className="label">Valid Until</span>
+            <span className="value">{policy.end_date}</span>
+          </div>
+        )}
+      </div>
+      {policy.benefits && policy.benefits.length > 0 && (
+        <div className="policyBenefits">
+          <strong>Covered Benefits:</strong>
+          <ul>
+            {policy.benefits.map((benefit, i) => (
+              <li key={i}>{benefit}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Message Parser - renders basic markdown-like formatting
+function parseMessageText(text: string): ReactNode[] {
+  const lines = text.split("\n");
+  const elements: ReactNode[] = [];
+  let inList = false;
+  let listItems: string[] = [];
+  let listType: "ul" | "ol" = "ul";
+
+  function flushList() {
+    if (listItems.length > 0) {
+      const Tag = listType;
+      elements.push(
+        <Tag key={`list-${elements.length}`}>
+          {listItems.map((item, i) => (
+            <li key={i}>{formatInlineText(item)}</li>
+          ))}
+        </Tag>
+      );
+      listItems = [];
+      inList = false;
+    }
+  }
+
+  lines.forEach((line, i) => {
+    const trimmed = line.trim();
+
+    // Headers
+    if (trimmed.startsWith("## ")) {
+      flushList();
+      elements.push(<div key={i} className="headerText">{formatInlineText(trimmed.slice(3))}</div>);
+      return;
+    }
+    if (trimmed.startsWith("### ")) {
+      flushList();
+      elements.push(<div key={i} className="headerText" style={{ fontSize: "0.88rem" }}>{formatInlineText(trimmed.slice(4))}</div>);
+      return;
+    }
+
+    // Divider
+    if (trimmed === "---" || trimmed === "***") {
+      flushList();
+      elements.push(<div key={i} className="divider" />);
+      return;
+    }
+
+    // Unordered list
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
+      if (!inList || listType !== "ul") {
+        flushList();
+        inList = true;
+        listType = "ul";
+      }
+      listItems.push(trimmed.slice(2));
+      return;
+    }
+
+    // Ordered list
+    const olMatch = trimmed.match(/^(\d+)\.\s+(.+)/);
+    if (olMatch) {
+      if (!inList || listType !== "ol") {
+        flushList();
+        inList = true;
+        listType = "ol";
+      }
+      listItems.push(olMatch[2]);
+      return;
+    }
+
+    // Empty line
+    if (trimmed === "") {
+      flushList();
+      return;
+    }
+
+    // Regular text
+    flushList();
+    elements.push(<span key={i}>{formatInlineText(trimmed)}{" "}</span>);
+  });
+
+  flushList();
+  return elements;
+}
+
+// Format inline text (bold, italic)
+function formatInlineText(text: string): ReactNode {
+  const parts: ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining.length > 0) {
+    // Bold
+    const boldMatch = remaining.match(/\*\*(.+?)\*\*/);
+    // Italic
+    const italicMatch = remaining.match(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/);
+
+    if (boldMatch && (!italicMatch || (boldMatch.index ?? 0) <= (italicMatch.index ?? 0))) {
+      const idx = boldMatch.index ?? 0;
+      if (idx > 0) parts.push(remaining.slice(0, idx));
+      parts.push(<strong key={key++}>{boldMatch[1]}</strong>);
+      remaining = remaining.slice(idx + boldMatch[0].length);
+    } else if (italicMatch) {
+      const idx = italicMatch.index ?? 0;
+      if (idx > 0) parts.push(remaining.slice(0, idx));
+      parts.push(<em key={key++}>{italicMatch[1]}</em>);
+      remaining = remaining.slice(idx + italicMatch[0].length);
+    } else {
+      parts.push(remaining);
+      break;
+    }
+  }
+
+  return parts.length === 1 ? parts[0] : <>{parts}</>;
 }
 
 export function InsuranceAgentBubble() {
@@ -43,7 +275,7 @@ export function InsuranceAgentBubble() {
     setLoading(true);
     try {
       const result = await askInsuranceAgent(value);
-      setMessages((current) => [...current, { sender: "agent", text: result.reply, actions: result.actions }]);
+      setMessages((current) => [...current, { sender: "agent", text: result.reply, actions: result.actions, structuredData: result.structured_data ?? undefined }]);
     } catch (error) {
       setMessages((current) => [...current, { sender: "agent", text: error instanceof Error ? error.message : "The Insurance AI Agent is unavailable right now." }]);
     } finally {
@@ -72,6 +304,40 @@ export function InsuranceAgentBubble() {
     return <button key={action.label} className="agentAction" type="button" onClick={() => setConsultationOpen(true)}>{action.label}</button>;
   }
 
+  function renderStructuredData(data: StructuredData) {
+    if (data.type === "claim_status" && data.claims) {
+      return (
+        <div className="structuredDataContainer">
+          {data.claims.length === 1 ? (
+            <ClaimStatusCard claim={data.claims[0]} />
+          ) : (
+            <div className="claimsList">
+              {data.claims.map((claim) => (
+                <ClaimStatusCard key={claim.id} claim={claim} />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (data.type === "policy_info" && data.policies) {
+      return (
+        <div className="structuredDataContainer">
+          {data.policies.length === 1 ? (
+            <PolicyInfoCard policy={data.policies[0]} />
+          ) : (
+            <div className="policiesList">
+              {data.policies.map((policy) => (
+                <PolicyInfoCard key={policy.policy_number} policy={policy} />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
+  }
+
   if (hidden) return null;
   return <>
     <button className="chatLauncher" type="button" onClick={() => setOpen((value) => !value)} aria-label={open ? "Close Insurance AI Agent" : "Open Insurance AI Agent"} aria-expanded={open}><span className="chatPulse" /><LayersIcon size={22} /></button>
@@ -79,7 +345,13 @@ export function InsuranceAgentBubble() {
       <header><div><span><LayersIcon size={18} /></span><div><strong>Insurance AI Agent</strong><small><i />{authenticated ? "Customer mode" : "Guest mode"}</small></div></div><button type="button" onClick={() => setOpen(false)} aria-label="Close Agent"><CloseIcon size={18} /></button></header>
       <div className="agentIntro"><strong>How can I help you?</strong><span>{authenticated ? "Ask about your policies or claims." : "Ask general insurance questions in English or Khmer."}</span></div>
       <div className="chatMessages">
-        {messages.map((message, index) => <div key={index} className={message.sender}><span>{message.text}</span>{message.actions?.map(renderAction)}</div>)}
+        {messages.map((message, index) => (
+          <div key={index} className={message.sender}>
+            <div className="messageContent">{parseMessageText(message.text)}</div>
+            {message.structuredData && renderStructuredData(message.structuredData)}
+            {message.actions?.map(renderAction)}
+          </div>
+        ))}
         {consultationOpen && <form className="consultationForm" onSubmit={submitConsultation}>
           <strong>Request a consultation</strong>
           <input required aria-label="Name" placeholder="Your name" value={consultation.name} onChange={(event) => setConsultation({ ...consultation, name: event.target.value })} />
