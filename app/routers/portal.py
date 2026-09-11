@@ -24,7 +24,7 @@ class ProductBody(BaseModel):
     code: str; name: str; product_type: str; description: str = ""; required_documents: list[str]
     covered_claim_types: list[str]; auto_approval_threshold: Decimal | None = None; active: bool = True
 class IssuePolicyBody(BaseModel):
-    user_id: int; insurance_product_id: int; policy_template_id: int | None = None; policy_number: str
+    user_id: int; insurance_product_id: int; policy_template_id: int; policy_number: str
     start_date: date; end_date: date; coverage_limit: Decimal | None = None; deductible: Decimal | None = None; currency: str = "USD"
 
 @router.post("/demo/seed")
@@ -160,11 +160,13 @@ async def create_product(body:ProductBody, x_demo_user:int=Header(...), db:Async
 @router.post("/admin/customer-policies")
 async def issue_customer_policy(body:IssuePolicyBody,x_demo_user:int=Header(...),db:AsyncSession=Depends(get_db)):
     admin=await actor(db,x_demo_user,{"admin"}); customer=await db.get(User,body.user_id); product=await db.get(InsuranceProduct,body.insurance_product_id)
-    template=await db.get(PolicyDocument,body.policy_template_id) if body.policy_template_id else None
+    template=await db.get(PolicyDocument,body.policy_template_id)
     if not customer or customer.role!="customer": raise HTTPException(404,"Customer not found")
     if not product: raise HTTPException(404,"Product not found")
-    if template and template.insurance_product_id!=product.id: raise HTTPException(422,"Policy template does not belong to the selected product")
+    if not template: raise HTTPException(404,"Policy document not found")
+    if template.insurance_product_id!=product.id: raise HTTPException(422,"Policy template does not belong to the selected product")
+    if template.status!="active": raise HTTPException(422,"Policy template must be an active policy document")
     if body.end_date < body.start_date: raise HTTPException(422,"Policy end date must not precede start date")
-    policy=Policy(user_id=customer.id,insurance_product_id=product.id,policy_template_id=template.id if template else None,policy_number=body.policy_number.strip().upper(),product_version=product.version,status="active",start_date=body.start_date,end_date=body.end_date,coverage_limit=body.coverage_limit,deductible=body.deductible,currency=body.currency.upper())
+    policy=Policy(user_id=customer.id,insurance_product_id=product.id,policy_template_id=template.id,policy_number=body.policy_number.strip().upper(),product_version=product.version,status="active",start_date=body.start_date,end_date=body.end_date,coverage_limit=body.coverage_limit,deductible=body.deductible,currency=body.currency.upper())
     db.add(policy);await db.commit();await db.refresh(policy)
     return {"id":policy.id,"policy_number":policy.policy_number,"customer":customer.email,"product":product.name,"issued_by":admin.email}
