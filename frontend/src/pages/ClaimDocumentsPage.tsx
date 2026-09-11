@@ -22,6 +22,7 @@ export function ClaimDocumentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadSteps, setUploadSteps] = useState<Array<{ type: DocumentType; title: string; status: "pending" | "uploading" | "done" }> | null>(null);
   const [processingSteps, setProcessingSteps] = useState<Array<{ type: DocumentType; title: string; status: "pending" | "reading" | "done" }> | null>(null);
+  const [finalizingTicks, setFinalizingTicks] = useState(0);
 
   async function refresh() {
     if (!claimId) return;
@@ -40,6 +41,8 @@ export function ClaimDocumentsPage() {
     setError(null);
     const required = claim?.policy_requirements?.required_documents ?? [];
     setProcessingSteps(required.map((item) => ({ type: item.type, title: item.title, status: "pending" })));
+    setFinalizingTicks(0);
+    let precheckDone = false;
     async function animateReadingSteps() {
       // Real OCR + extraction for one document takes a few seconds (Tesseract
       // then Azure OpenAI), so this is paced to roughly track that instead of
@@ -50,12 +53,19 @@ export function ClaimDocumentsPage() {
         await new Promise((resolve) => setTimeout(resolve, stepDelayMs));
         setProcessingSteps((steps) => steps?.map((step, i) => (i === index ? { ...step, status: "done" } : step)) ?? steps);
       }
+      // The backend has no incremental progress API, so once every document has
+      // been "read" in the UI, keep counting a number up instead of freezing on
+      // a bare "Finalizing…" while the real precheck call is still in flight.
+      while (!precheckDone) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        setFinalizingTicks((n) => Math.min(n + 1, 9));
+      }
     }
     try {
       // Run the real precheck alongside a staged reveal of each document so the
       // wait has visible, numbered progress instead of one opaque spinner - the
       // backend has no incremental progress API, so both settle before navigating.
-      await Promise.all([runClaimPrecheck(claimId), animateReadingSteps()]);
+      await Promise.all([runClaimPrecheck(claimId).finally(() => { precheckDone = true; }), animateReadingSteps()]);
       navigate(`/claims/${claimId}/verification`);
     } catch (apiError) {
       setError(apiError instanceof Error ? `Document processing failed. Please retry the affected document. ${apiError.message}` : "Document processing failed. Please retry the affected document.");
@@ -63,6 +73,7 @@ export function ClaimDocumentsPage() {
     } finally {
       setBusyKey(null);
       setProcessingSteps(null);
+      setFinalizingTicks(0);
     }
   }
 
@@ -115,9 +126,17 @@ export function ClaimDocumentsPage() {
 
   if (!claimId) return <Alert tone="danger">Invalid claim ID.</Alert>;
 
+  // Reading steps fill 0-90%; once every document has been "read", the
+  // remaining 90-99% ticks up slowly while the real backend call finishes -
+  // this always shows a real, changing number instead of a static "Finalizing…".
+  const readingDone = processingSteps ? processingSteps.filter((step) => step.status === "done").length : 0;
+  const readingTotal = processingSteps?.length ?? 0;
   const processingPercent = processingSteps
-    ? Math.round((processingSteps.filter((step) => step.status === "done").length / processingSteps.length) * 100)
+    ? readingDone < readingTotal
+      ? Math.round((readingDone / readingTotal) * 90)
+      : Math.min(99, 90 + finalizingTicks)
     : null;
+  const isFinalizing = Boolean(processingSteps) && readingDone === readingTotal && readingTotal > 0;
 
   return (
     <div className="pageStack">
@@ -154,7 +173,7 @@ export function ClaimDocumentsPage() {
                 <div className="checklistProgressBar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={processingPercent ?? 0}>
                   <div className="checklistProgressBarFill" style={{ width: `${processingPercent ?? 0}%` }} />
                 </div>
-                <span className="checklistProgressLabel">{(processingPercent ?? 0) < 100 ? `${processingPercent ?? 0}%` : "Finalizing…"}</span>
+                <span className="checklistProgressLabel">{isFinalizing ? `${processingPercent ?? 0}% · Finalizing…` : `${processingPercent ?? 0}%`}</span>
               </div>
               <ol className="uploadChecklist" aria-label="Document reading progress">
                 {processingSteps.map((step, index) => (
