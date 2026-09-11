@@ -215,6 +215,10 @@ async def process_document(document_id: int, db: AsyncSession, provider: OCRProv
         )
         return ocr_run
     except Exception as exc:
+        # A failed commit above leaves the session's transaction aborted;
+        # any further use of `db` (including plain attribute writes that
+        # trigger autoflush) raises PendingRollbackError until this runs.
+        await db.rollback()
         ocr_run.status = "failed"
         document.ocr_status = "failed"
         ocr_run.error_message = str(exc)

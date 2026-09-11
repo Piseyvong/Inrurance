@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
 from pathlib import Path
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.audit_log import AuditLog
 from app.models.claim import Claim
 from app.models.domain import Decision, InsuranceProduct, Policy, PolicyDocument, PolicyRule, User
+from app.models.rule_result import RuleResult
 from app.services.portal_service import actor, password_hash, screen_risk, seed_demo
 from app.services.policy_service import get_policy
 
@@ -43,6 +44,49 @@ async def portal_me(x_demo_user: int = Header(...), db: AsyncSession = Depends(g
     return {"user":{"id":user.id,"full_name":user.full_name,"email":user.email,"role":user.role},
         "policies":[{"id":p.id,"policy_number":p.policy_number,"status":p.status,"start_date":p.start_date,"end_date":p.end_date,"coverage_limit":p.coverage_limit,"deductible":p.deductible,"currency":p.currency,"product":{"id":pr.id,"name":pr.name,"type":pr.product_type,"version":p.product_version}} for p,pr in policies],
         "claims":[{"id":c.id,"claim_number":c.claim_number or f"CLM-{c.id:06d}","customer_policy_id":c.customer_policy_id,"type":c.claim_type,"amount":c.claimed_amount,"currency":c.currency,"status":c.status,"review_status":c.review_status,"risk_band":c.risk_band,"created_at":c.created_at} for c in claims]}
+
+@router.get("/portal/claims/history")
+async def claim_history(page: int = 1, page_size: int = 10, status: str | None = None, x_demo_user: int = Header(...), db: AsyncSession = Depends(get_db)):
+    """Return the signed-in customer's claims, newest first, with pagination.
+
+    The dashboard's inline claims list has no room to show a customer's full
+    history once they have more than a handful of claims; this endpoint backs
+    a dedicated history page instead.
+    """
+    user = await actor(db, x_demo_user, {"customer"})
+    page = max(page, 1); page_size = min(max(page_size, 1), 50)
+    query = select(Claim).where(Claim.user_id == user.id)
+    if status: query = query.where(Claim.status == status)
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+    claims = list((await db.execute(query.order_by(Claim.created_at.desc()).offset((page - 1) * page_size).limit(page_size))).scalars())
+    claim_ids = [c.id for c in claims]
+    decisions = {d.claim_id: d for d in (await db.execute(select(Decision).where(Decision.claim_id.in_(claim_ids), Decision.final.is_(True)))).scalars()}
+    # A verification/precheck run writes rule_results, so its presence marks
+    # OCR extraction and compliance checking as done without an extra query
+    # per claim to re-derive document completeness from the policy template.
+    verified_claim_ids = set((await db.execute(select(RuleResult.claim_id).where(RuleResult.claim_id.in_(claim_ids)).distinct())).scalars().all())
+    not_started_statuses = {"waiting_for_documents", "submitted", "intake"}
+    return {
+        "items": [{
+            "id": c.id, "claim_number": c.claim_number or f"CLM-{c.id:06d}", "claim_type": c.claim_type,
+            "status": c.status, "review_status": c.review_status,
+            "claimed_amount": c.claimed_amount, "currency": c.currency,
+            "created_at": c.created_at, "updated_at": c.updated_at,
+            "decision": None if c.id not in decisions else {
+                "outcome": decisions[c.id].outcome, "amount": decisions[c.id].recommended_amount,
+                "rationale": decisions[c.id].rationale, "decided_at": decisions[c.id].created_at,
+            },
+            "progress": {
+                "policy_matched": True,
+                "documents_uploaded": c.status not in not_started_statuses,
+                "ocr_extracted": c.id in verified_claim_ids,
+                "compliance_checked": c.id in verified_claim_ids,
+                "decision": c.status == "auto_approved" or c.id in decisions,
+            },
+        } for c in claims],
+        "page": page, "page_size": page_size, "total": total,
+        "total_pages": max(1, -(-total // page_size)),
+    }
 
 @router.get("/portal/policies/{policy_id}")
 async def customer_policy_detail(policy_id:int, x_demo_user:int=Header(...), db:AsyncSession=Depends(get_db)):

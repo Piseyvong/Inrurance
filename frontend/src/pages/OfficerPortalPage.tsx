@@ -9,6 +9,8 @@ import { StatusBadge } from "../components/StatusBadge";
 import type { Claim } from "../types/api";
 import { formatDateTime } from "../utils/documents";
 
+const AUTO_APPROVAL_LIMIT = 50;
+
 export function OfficerPortalPage() {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +69,7 @@ export function OfficerPortalPage() {
                       </Link>
                     </td>
                     <td data-label="Claimant">{claim.claimant_name ?? "Pending extraction"}</td>
-                    <td data-label="Amount">{claim.claimed_amount ?? "Not provided"}</td>
+                    <td data-label="Amount">{claim.claimed_amount == null ? "Not provided" : <span className={`amountTone${Number(claim.claimed_amount) < AUTO_APPROVAL_LIMIT ? " low" : " high"}`}>{claim.claimed_amount}</span>}</td>
                     <td data-label="Status">
                       <StatusBadge status={claim.status} />
                     </td>

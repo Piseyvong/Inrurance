@@ -1,0 +1,77 @@
+# Production stack: Postgres + the FastAPI backend (with Tesseract/Poppler
+# baked into its image) + the built React frontend served by nginx.
+#
+# Usage:
+#   cp .env.production.example .env.production   # fill in real values
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# This is separate from docker-compose.yml (which only runs Postgres/Redis/
+# pgAdmin for local development against the Vite dev server) — that file is
+# untouched and still works the same way for local dev.
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-insurance_claims}
+      POSTGRES_USER: ${POSTGRES_USER:-insurance_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published to the host on purpose — only the backend container needs
+    # it. Use `docker compose exec postgres psql ...` for a shell, or add a
+    # `ports:` entry yourself if you need external DB tooling.
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      # Overrides anything of the same name in .env.production: the backend
+      # always talks to the "postgres" service on the compose network, never
+      # to a DATABASE_URL/localhost left over from a local .env file.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-insurance_claims}
+      POSTGRES_USER: ${POSTGRES_USER:-insurance_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: "8000"
+    volumes:
+      - uploads_data:/app/uploads
+      - processed_uploads_data:/app/processed_uploads
+      - logs_data:/app/logs
+    ports:
+      - "${BACKEND_PUBLISHED_PORT:-8000}:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the JS bundle at build time — must be the address this
+        # backend is actually reachable at from the *browser* (a public
+        # domain/IP), not the "backend" service-name used between containers.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?Set VITE_API_BASE_URL in .env.production to the backend's public URL, e.g. http://your-domain-or-ip:8000}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PUBLISHED_PORT:-80}:80"
+
+volumes:
+  postgres_data:
+  uploads_data:
+  processed_uploads_data:
+  logs_data:

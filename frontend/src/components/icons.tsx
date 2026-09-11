@@ -127,11 +127,19 @@ export function ArrowRightIcon(props: IconProps) {
   );
 }
 
+export function CheckIcon(props: IconProps) {
+  return (
+    <IconShell {...props}>
+      <path d="M20 6L9 17l-5-5" />
+    </IconShell>
+  );
+}
+
 export function ArrowLeftIcon(props: IconProps) {
   return (
     <IconShell {...props}>
-      <line x1="19" y1="12" x2="5" y2="12" />
-      <polyline points="12 19 5 12 12 5" />
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
     </IconShell>
   );
 }
@@ -200,6 +208,44 @@ export function LayersIcon(props: IconProps) {
       <polygon points="12 2 2 7 12 12 22 7 12 2" />
       <polyline points="2 17 12 22 22 17" />
       <polyline points="2 12 12 17 22 12" />
+    </IconShell>
+  );
+}
+
+export function CheckCircleIcon(props: IconProps) {
+  return (
+    <IconShell {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.5 12.2l2.3 2.3 4.7-4.9" />
+    </IconShell>
+  );
+}
+
+export function AlertTriangleIcon(props: IconProps) {
+  return (
+    <IconShell {...props}>
+      <path d="M12 3.5l9.5 16.5H2.5z" />
+      <line x1="12" y1="9.5" x2="12" y2="13.5" />
+      <line x1="12" y1="16.7" x2="12" y2="16.71" />
+    </IconShell>
+  );
+}
+
+export function XCircleIcon(props: IconProps) {
+  return (
+    <IconShell {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="9.3" y1="9.3" x2="14.7" y2="14.7" />
+      <line x1="14.7" y1="9.3" x2="9.3" y2="14.7" />
+    </IconShell>
+  );
+}
+
+export function MinusCircleIcon(props: IconProps) {
+  return (
+    <IconShell {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="8" y1="12" x2="16" y2="12" />
     </IconShell>
   );
 }

@@ -1,6 +1,17 @@
+import type { ReactElement } from "react";
+import { AlertTriangleIcon, CheckCircleIcon, ClockIcon, MinusCircleIcon, XCircleIcon } from "./icons";
+
 interface StatusBadgeProps {
   status: string;
 }
+
+const toneIcon: Record<string, (props: { size?: number }) => ReactElement> = {
+  good: CheckCircleIcon,
+  warning: AlertTriangleIcon,
+  danger: XCircleIcon,
+  info: ClockIcon,
+  neutral: MinusCircleIcon
+};
 
 const statusTone: Record<string, string> = {
   match: "good",
@@ -42,5 +53,11 @@ const statusTone: Record<string, string> = {
 export function StatusBadge({ status }: StatusBadgeProps) {
   const normalised = status.toLowerCase().split(" ").join("_");
   const tone = statusTone[normalised] ?? "neutral";
-  return <span className={`statusBadge ${tone}`}>{normalised.split("_").join(" ")}</span>;
+  const Icon = toneIcon[tone];
+  return (
+    <span className={`statusBadge ${tone}`}>
+      <Icon size={13} />
+      {normalised.split("_").join(" ")}
+    </span>
+  );
 }

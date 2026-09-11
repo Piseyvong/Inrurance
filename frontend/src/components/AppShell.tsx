@@ -6,6 +6,8 @@ import {
   ClockIcon,
   CloseIcon,
   DashboardIcon,
+  FileTextIcon,
+  LayersIcon,
   LogInIcon,
   LogOutIcon,
   MenuIcon,
@@ -22,7 +24,13 @@ interface AppShellProps {
 interface NavItem {
   label: string;
   Icon: ComponentType<{ size?: number; className?: string }>;
-  to?: string;
+  to: string;
+  end?: boolean;
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
 }
 
 const publicNavItems: NavItem[] = [
@@ -33,23 +41,54 @@ const publicNavItems: NavItem[] = [
   { to: "/login?role=officer", label: "Officer sign in", Icon: ShieldCheckIcon }
 ];
 
-const officerNavItems: NavItem[] = [
-  { to: "/officer", label: "Officer Portal", Icon: UserCheckIcon },
-  { to: "/admin/policies", label: "Policy Management", Icon: DashboardIcon }
-];
+function roleLabel(role: string) {
+  if (role === "customer") return "Customer portal";
+  if (role === "admin") return "Administration";
+  return "Officer workspace";
+}
 
-const customerNavItems: NavItem[] = [
-  { to: "/portal", label: "My dashboard", Icon: DashboardIcon }
-];
+function sidebarGroups(role: string): NavGroup[] {
+  if (role === "customer") {
+    return [
+      {
+        label: "Customer",
+        items: [
+          { to: "/portal", label: "My dashboard", Icon: DashboardIcon, end: true },
+          { to: "/customer/claims", label: "My claims", Icon: FileTextIcon }
+        ]
+      }
+    ];
+  }
+  const administration: NavItem[] = [{ to: "/admin/policies", label: "Policy management", Icon: FileTextIcon }];
+  if (role === "admin") administration.unshift({ to: "/admin", label: "Products", Icon: LayersIcon, end: true });
+  return [
+    {
+      label: "Review",
+      items: [{ to: "/officer", label: "Officer portal", Icon: UserCheckIcon }]
+    },
+    {
+      label: "Administration",
+      items: administration
+    }
+  ];
+}
 
 export function AppShell({ children }: AppShellProps) {
   const [navOpen, setNavOpen] = useState(false);
-  const location = useLocation();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   useSyncExternalStore(subscribeSession, () => sessionStorage.getItem("insuranceSession"), () => null);
   const currentSession = session();
   const authenticated = Boolean(currentSession);
-  const activeNavItems = !currentSession ? publicNavItems : currentSession.role === "customer" ? customerNavItems : officerNavItems;
+  const navGroups = currentSession ? sidebarGroups(currentSession.role) : [];
+
+  function navActive(item: NavItem, isActive: boolean): boolean {
+    if (isActive) return true;
+    if (item.to === "/portal") return pathname === "/customer/policies" || pathname.startsWith("/customer/policies/");
+    if (item.to === "/customer/claims") return pathname.startsWith("/claims/");
+    if (item.to === "/admin") return pathname.startsWith("/admin/policies") === false && pathname.startsWith("/admin");
+    return false;
+  }
 
   function logout() {
     clearSession();
@@ -58,10 +97,61 @@ export function AppShell({ children }: AppShellProps) {
   }
 
   return (
-    <div className="appShell">
-      <header className="topBar">
+    <div className={`appShell${authenticated ? " appShell--sidebar" : ""}`}>
+      {currentSession ? <>
+        <div className={`sidebarScrim${navOpen ? " open" : ""}`} onClick={() => setNavOpen(false)} aria-hidden="true" />
+        <aside className={`sidebar${navOpen ? " open" : ""}`} aria-label="Portal navigation">
+          <div className="sidebarHead">
+            <NavLink className="brand" to={sessionHome(currentSession)} aria-label="Portal home" onClick={() => setNavOpen(false)}>
+              <div className="brandMark" aria-hidden="true">
+                <ShieldCheckIcon size={22} />
+              </div>
+              <div>
+                <strong>Insurance AI</strong>
+                <span>Portal</span>
+              </div>
+            </NavLink>
+            <button type="button" className="navToggle" onClick={() => setNavOpen(false)} aria-label="Close menu">
+              <CloseIcon size={20} />
+            </button>
+          </div>
+          <div className="sidebarRole"><UserCheckIcon size={15} /><span>{roleLabel(currentSession.role)}</span></div>
+          <nav className="sidebarNav">
+            {navGroups.map((group) => (
+              <div key={group.label} className="sidebarGroup">
+                <span className="sidebarGroupLabel">{group.label}</span>
+                {group.items.map((item) => (
+                  <NavLink key={item.label} to={item.to} end={item.end} onClick={() => setNavOpen(false)}
+                    className={({ isActive }) => (navActive(item, isActive) ? "active" : "")}>
+                    <item.Icon size={18} />
+                    <span>{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="sidebarFoot">
+            <div className="sidebarUser">
+              <strong>{currentSession.full_name}</strong>
+              <span>{currentSession.email}</span>
+            </div>
+            <button className="navLogout" type="button" onClick={logout}><LogOutIcon size={18} /><span>Log out</span></button>
+          </div>
+        </aside>
+      </> : null}
+
+      <header className={`topBar${authenticated ? " topBar--slim" : ""}`}>
         <div className="topBarInner">
-          <NavLink className="brand" to={authenticated ? sessionHome(currentSession) : "/"} aria-label="Insurance AI Agent home">
+          {currentSession ? <button type="button" className="navToggle" onClick={() => setNavOpen(true)} aria-label="Open portal menu"><MenuIcon size={20} /></button> : null}
+          {currentSession ? <NavLink className="brand" to={sessionHome(currentSession)} aria-label="Portal home" onClick={() => setNavOpen(false)}>
+            <div className="brandMark" aria-hidden="true">
+              <ShieldCheckIcon size={22} />
+            </div>
+            <div>
+              <strong>Insurance AI</strong>
+              <span>Portal</span>
+            </div>
+          </NavLink> : <NavLink className="brand" to="/" aria-label="Insurance AI Agent home">
             <div className="brandMark" aria-hidden="true">
               <ShieldCheckIcon size={22} />
             </div>
@@ -69,8 +159,8 @@ export function AppShell({ children }: AppShellProps) {
               <strong>Insurance AI</strong>
               <span>Agents for modern insurers</span>
             </div>
-          </NavLink>
-          {activeNavItems.length ? <button
+          </NavLink>}
+          {!authenticated ? <button
             type="button"
             className="navToggle"
             aria-expanded={navOpen}
@@ -80,11 +170,11 @@ export function AppShell({ children }: AppShellProps) {
             {navOpen ? <CloseIcon size={20} /> : <MenuIcon size={20} />}
             <span className="srOnly">{navOpen ? "Close Navigation" : "Open Navigation"}</span>
           </button> : null}
-          {activeNavItems.length ? <nav id="primary-navigation" aria-label="Main Navigation" className={navOpen ? "open" : undefined}>
-            {activeNavItems.map((item) => (
+          {!authenticated ? <nav id="primary-navigation" aria-label="Main Navigation" className={navOpen ? "open" : undefined}>
+            {publicNavItems.map((item) => (
               <NavLink
                 key={item.label}
-                to={item.to!}
+                to={item.to}
                 end={item.to === "/"}
                 onClick={() => setNavOpen(false)}
               >
@@ -92,10 +182,10 @@ export function AppShell({ children }: AppShellProps) {
                 <span>{item.label}</span>
               </NavLink>
             ))}
-            {currentSession ? <button className="navLogout" type="button" onClick={logout} aria-label={`Log out ${currentSession.full_name}`}><LogOutIcon size={18}/><span>Logout</span></button> : null}
           </nav> : null}
         </div>
       </header>
+
       <main className="mainContent">{children}</main>
       <InsuranceAgentBubble />
     </div>

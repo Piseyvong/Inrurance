@@ -27,7 +27,8 @@ export function AuditHistoryPage() {
 
   return (
     <div className="pageStack">
-      <PageHeader title={`Claim ${claimId} Audit History`} eyebrow="Audit Timeline"><BackButton to={`/officer/claims/${claimId}`} label="Claim review" /></PageHeader>
+      <BackButton to={`/officer/claims/${claimId}`} label="Claim review" />
+      <PageHeader title={`Claim ${claimId} Audit History`} eyebrow="Audit Timeline" />
       {error ? <Alert tone="danger">{error}</Alert> : null}
       {!error && entries.length === 0 ? <Alert>No audit history found for this claim.</Alert> : null}
       <ol className="timeline">

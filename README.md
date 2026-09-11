@@ -28,16 +28,56 @@ only by the deterministic rules engine.
 
 ## Setup
 
+### Backend
+
+Quickstart (local SQLite, no Docker/Postgres, no Tesseract/Azure OpenAI keys
+needed — good for exercising the API/UI only):
+
 ```powershell
-cd "D:\Work\Insurance AI Agent"
+cd "Inrurance"
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-docker compose up -d
+copy .env.example .env
+```
+
+Then edit `.env` and set:
+
+```text
+DATABASE_URL=sqlite+aiosqlite:///./insurance_demo.db
+OCR_PROVIDER=demo_text
+```
+
+```powershell
 .\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe -m scripts.run_backend
 ```
 
-If you use your own PostgreSQL, copy `.env.example` to `.env` and adjust the
-database settings before running Alembic.
+The backend serves on `http://127.0.0.1:8000` (Swagger UI at `/docs`).
+
+For the full stack (real Postgres, real Tesseract OCR, real Azure OpenAI
+extraction), instead of the SQLite/demo_text overrides above:
+
+```powershell
+docker compose up -d
+```
+
+and copy `.env.example` to `.env` as-is (leave `DATABASE_URL` pointed at
+Postgres, `OCR_PROVIDER=tesseract`, and fill in `TESSERACT_CMD`,
+`TESSERACT_TESSDATA_DIR`, and the `AZURE_OPENAI_*` values) before running
+Alembic and the backend.
+
+### Frontend
+
+```powershell
+cd "Inrurance\frontend"
+npm install
+copy .env.example .env
+npm run dev
+```
+
+The frontend reads `VITE_PORT` from `frontend/.env` (default `5175`; set it to
+`5173` if you need that port) and serves on `http://127.0.0.1:<VITE_PORT>`.
+Make sure the backend's `CORS_ORIGINS` includes that origin.
 
 ## Environment Variables
 

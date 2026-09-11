@@ -12,4 +12,8 @@ if __name__ == "__main__":
         host=settings.backend_host,
         port=settings.backend_port,
         reload=True,
+        # Without this, the default reload watcher covers the whole project
+        # root, so any frontend/src edit restarts the backend (dropped
+        # connections, a fresh DB pool) even though nothing backend-side changed.
+        reload_dirs=["app"],
     )

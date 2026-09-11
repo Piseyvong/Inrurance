@@ -55,6 +55,43 @@ export interface Claim {
   created_at: string | null;
 }
 
+export interface ClaimHistoryDecision {
+  outcome: string;
+  amount: string | number | null;
+  rationale: string;
+  decided_at: string | null;
+}
+
+export interface ClaimHistoryProgress {
+  policy_matched: boolean;
+  documents_uploaded: boolean;
+  ocr_extracted: boolean;
+  compliance_checked: boolean;
+  decision: boolean;
+}
+
+export interface ClaimHistoryItem {
+  id: number;
+  claim_number: string;
+  claim_type: string;
+  status: string;
+  review_status: string | null;
+  claimed_amount: string | number | null;
+  currency: string;
+  created_at: string | null;
+  updated_at: string | null;
+  decision: ClaimHistoryDecision | null;
+  progress: ClaimHistoryProgress;
+}
+
+export interface ClaimHistoryResponse {
+  items: ClaimHistoryItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
 export interface DocumentRecord {
   id: number;
   claim_id: number;

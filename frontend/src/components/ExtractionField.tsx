@@ -31,12 +31,21 @@ function confidenceLabel(method?: string | null) {
 
 export function ExtractionField({ name, value, normalizedValue, status, confidence, extractionMethod, lineRefs, source, interpretation, actions }: ExtractionFieldProps) {
   const displayValue = normalizedValue || value || ((status ?? "").toUpperCase() === "MISSING" ? "Missing" : "Unclear");
+  const statusKey = (status ?? "").toUpperCase();
+  const valueTone =
+    statusKey === "VALID" || statusKey === "CORRECTED"
+      ? " good"
+      : statusKey === "MISSING" || statusKey === "CRITICAL"
+      ? " bad"
+      : statusKey === "UNCLEAR"
+      ? " warn"
+      : "";
   const confidenceValue = confidenceDisplay(confidence);
-  const lines = parseLineRefs(lineRefs).join(", ");
+  const lines = parseLineRefs(lineRefs ?? null).join(", ");
   const long = displayValue.length > 72 || Boolean(source && source.length > 100) || Boolean(interpretation && interpretation.length > 100);
   return <article className={`extractionField${long ? " long" : ""}`}>
     <div className="extractionFieldPrimary">
-      <div><span className="extractionFieldName">{name.replace(/_/g," ")}</span><strong className="extractionFieldValue">{displayValue}</strong>{normalizedValue && value && normalizedValue !== value ? <small>Extracted text: {value}</small> : null}</div>
+      <div><span className="extractionFieldName">{name.replace(/_/g," ")}</span><strong className={`extractionFieldValue${valueTone}`}>{displayValue}</strong>{normalizedValue && value && normalizedValue !== value ? <small>Extracted text: {value}</small> : null}</div>
       <StatusBadge status={status || "unclear"}/>
     </div>
     {(confidenceValue || lines) ? <dl className="extractionMetadata">

@@ -20,6 +20,8 @@ export function ClaimDocumentsPage() {
   const [selectedFiles, setSelectedFiles] = useState<Partial<Record<DocumentType, File>>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadSteps, setUploadSteps] = useState<Array<{ type: DocumentType; title: string; status: "pending" | "uploading" | "done" }> | null>(null);
+  const [processingSteps, setProcessingSteps] = useState<Array<{ type: DocumentType; title: string; status: "pending" | "reading" | "done" }> | null>(null);
 
   async function refresh() {
     if (!claimId) return;
@@ -36,14 +38,31 @@ export function ClaimDocumentsPage() {
     if (!claimId) return;
     setBusyKey("automatic-processing");
     setError(null);
+    const required = claim?.policy_requirements?.required_documents ?? [];
+    setProcessingSteps(required.map((item) => ({ type: item.type, title: item.title, status: "pending" })));
+    async function animateReadingSteps() {
+      // Real OCR + extraction for one document takes a few seconds (Tesseract
+      // then Azure OpenAI), so this is paced to roughly track that instead of
+      // finishing early and leaving a long silent "Finalizing" wait.
+      const stepDelayMs = 1800;
+      for (let index = 0; index < required.length; index += 1) {
+        setProcessingSteps((steps) => steps?.map((step, i) => (i === index ? { ...step, status: "reading" } : step)) ?? steps);
+        await new Promise((resolve) => setTimeout(resolve, stepDelayMs));
+        setProcessingSteps((steps) => steps?.map((step, i) => (i === index ? { ...step, status: "done" } : step)) ?? steps);
+      }
+    }
     try {
-      await runClaimPrecheck(claimId);
+      // Run the real precheck alongside a staged reveal of each document so the
+      // wait has visible, numbered progress instead of one opaque spinner - the
+      // backend has no incremental progress API, so both settle before navigating.
+      await Promise.all([runClaimPrecheck(claimId), animateReadingSteps()]);
       navigate(`/claims/${claimId}/verification`);
     } catch (apiError) {
       setError(apiError instanceof Error ? `Document processing failed. Please retry the affected document. ${apiError.message}` : "Document processing failed. Please retry the affected document.");
       await refresh();
     } finally {
       setBusyKey(null);
+      setProcessingSteps(null);
     }
   }
 
@@ -75,14 +94,20 @@ export function ClaimDocumentsPage() {
     }
     setBusyKey("upload-all");
     setError(null);
+    setUploadSteps(missing.map((required) => ({ type: required.type, title: required.title, status: "pending" })));
     try {
-      for (const required of missing) {
+      for (let index = 0; index < missing.length; index += 1) {
+        const required = missing[index];
+        setUploadSteps((steps) => steps!.map((step, i) => (i === index ? { ...step, status: "uploading" } : step)));
         await uploadClaimDocument(claimId, required.type, selectedFiles[required.type]!);
+        setUploadSteps((steps) => steps!.map((step, i) => (i === index ? { ...step, status: "done" } : step)));
       }
       setSelectedFiles({});
+      setUploadSteps(null);
       await startAutomaticProcessing();
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to upload all documents.");
+      setUploadSteps(null);
     } finally {
       setBusyKey(null);
     }
@@ -90,14 +115,17 @@ export function ClaimDocumentsPage() {
 
   if (!claimId) return <Alert tone="danger">Invalid claim ID.</Alert>;
 
+  const processingPercent = processingSteps
+    ? Math.round((processingSteps.filter((step) => step.status === "done").length / processingSteps.length) * 100)
+    : null;
+
   return (
     <div className="pageStack">
+      <BackButton to="/portal" label="Dashboard" />
       <PageHeader title={`Claim ${claimId} Documents`} eyebrow="Claimant Intake">
-        <BackButton to="/portal" label="Dashboard" />
         <span className="sectionNote">{busyKey === "automatic-processing" ? "Processing documents…" : "Processing starts automatically after the last required upload."}</span>
       </PageHeader>
-      {claim ? <ProgressTracker claim={claim} /> : null}
-      <Alert tone="warning">Use synthetic or anonymised documents only.</Alert>
+      {claim ? <ProgressTracker claim={claim} phase={processingSteps ? "Processing" : undefined} progress={processingPercent ?? undefined} /> : null}
       {error ? <Alert tone="danger">{error}</Alert> : null}
 
       <div className="documentsGrid">
@@ -111,7 +139,6 @@ export function ClaimDocumentsPage() {
               description={required.description}
               document={document}
               selectedFile={selectedFiles[required.type]}
-              processing={busyKey === "automatic-processing"}
               busy={Boolean(busyKey)}
               onSelectFile={(docType, file) => setSelectedFiles({ ...selectedFiles, [docType]: file ?? undefined })}
               onUpload={upload}
@@ -119,11 +146,43 @@ export function ClaimDocumentsPage() {
           );
         })}
       </div>
-      {claim ? <div className="formFooter documentUploadFooter">
-        <span>{claim.document_completeness.is_complete ? "All required documents are uploaded. Processing starts automatically." : "Select every required file, then upload them together."}</span>
-        {!claim.document_completeness.is_complete ? (
+      {claim ? <div className={uploadSteps || processingSteps ? "formFooter documentUploadFooter" : "formFooter documentUploadFooter is-idle"}>
+        <div className="documentUploadFooterStatus">
+          {processingSteps ? (
+            <>
+              <div className="checklistProgress">
+                <div className="checklistProgressBar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={processingPercent ?? 0}>
+                  <div className="checklistProgressBarFill" style={{ width: `${processingPercent ?? 0}%` }} />
+                </div>
+                <span className="checklistProgressLabel">{(processingPercent ?? 0) < 100 ? `${processingPercent ?? 0}%` : "Finalizing…"}</span>
+              </div>
+              <ol className="uploadChecklist" aria-label="Document reading progress">
+                {processingSteps.map((step, index) => (
+                  <li key={step.type} className={step.status}>
+                    <span className="uploadChecklistIndex" aria-hidden="true">{step.status === "done" ? "✓" : index + 1}</span>
+                    <span className="uploadChecklistLabel">{step.title}</span>
+                    <span className="uploadChecklistState">{step.status === "reading" ? "Reading…" : step.status === "done" ? "Complete" : "Waiting"}</span>
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : uploadSteps ? (
+            <ol className="uploadChecklist" aria-label="Upload progress">
+              {uploadSteps.map((step, index) => (
+                <li key={step.type} className={step.status}>
+                  <span className="uploadChecklistIndex" aria-hidden="true">{step.status === "done" ? "✓" : index + 1}</span>
+                  <span className="uploadChecklistLabel">{step.title}</span>
+                  <span className="uploadChecklistState">{step.status === "uploading" ? "Uploading…" : step.status === "done" ? "Uploaded" : "Waiting"}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <span>{claim.document_completeness.is_complete ? "All required documents are uploaded. Processing starts automatically." : "Select every required file, then upload them together."}</span>
+          )}
+        </div>
+        {!claim.document_completeness.is_complete && busyKey !== "automatic-processing" ? (
           <button type="button" disabled={Boolean(busyKey)} onClick={() => void uploadAllAndContinue()}>
-            {busyKey === "upload-all" ? "Uploading documents…" : "Upload required documents"}
+            {uploadSteps ? `Uploading… (${uploadSteps.filter((step) => step.status === "done").length}/${uploadSteps.length})` : "Upload required documents"}
           </button>
         ) : null}
       </div> : null}

@@ -9,6 +9,7 @@ import { OfficerPortalPage } from "./pages/OfficerPortalPage";
 import { VerificationPage } from "./pages/VerificationPage";
 import { LoginPage } from "./pages/LoginPage";
 import { CustomerPortalPage } from "./pages/CustomerPortalPage";
+import { ClaimHistoryPage } from "./pages/ClaimHistoryPage";
 import { AdminProductsPage } from "./pages/AdminProductsPage";
 import { PolicyManagementPage } from "./pages/PolicyManagementPage";
 import { CustomerPolicyPage } from "./pages/CustomerPolicyPage";
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/portal" element={<ProtectedRoute roles={["customer"]}><CustomerPortalPage /></ProtectedRoute>} />
         <Route path="/customer/policies/:policyId" element={<ProtectedRoute roles={["customer"]}><CustomerPolicyPage /></ProtectedRoute>} />
+        <Route path="/customer/claims" element={<ProtectedRoute roles={["customer"]}><ClaimHistoryPage /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute roles={["admin"]}><AdminProductsPage /></ProtectedRoute>} />
         <Route path="/admin/policies" element={<ProtectedRoute roles={["admin","officer"]}><PolicyManagementPage /></ProtectedRoute>} />
         <Route path="/claims/new" element={<Navigate to="/portal" replace />} />

@@ -1,4 +1,5 @@
 import { apiRequest } from "./client";
+import type { ClaimHistoryResponse } from "../types/api";
 
 export type Session = { user_id:number; full_name:string; email:string; role:"customer"|"officer"|"admin" };
 export function session():Session|null { try { return JSON.parse(sessionStorage.getItem("insuranceSession") || "null"); } catch { return null; } }
@@ -10,6 +11,7 @@ export function login(email:string,password:string) { return apiRequest<Session>
 export function portal() { const s=session(); return apiRequest<any>("/portal/me",{headers:{"X-Demo-User":String(s?.user_id)}}); }
 export function startPortalClaim(payload:unknown) { const s=session(); return apiRequest<any>("/portal/claims",{method:"POST",headers:{"X-Demo-User":String(s?.user_id)},body:JSON.stringify(payload)}); }
 export function customerPolicy(id:number){return apiRequest<any>(`/portal/policies/${id}`);}
+export function claimHistory(page:number,pageSize:number,status?:string){const params=new URLSearchParams({page:String(page),page_size:String(pageSize)});if(status)params.set("status",status);return apiRequest<ClaimHistoryResponse>(`/portal/claims/history?${params}`);}
 export async function customerPolicyDocumentUrl(id:number){const s=session();const base=import.meta.env.VITE_API_BASE_URL??"http://127.0.0.1:8000";const response=await fetch(`${base}/portal/policies/${id}/document`,{headers:{"X-Demo-User":String(s?.user_id??"")}});if(!response.ok)throw new Error("Policy document is not available.");return URL.createObjectURL(await response.blob());}
 export function products() { const s=session(); return apiRequest<any[]>("/admin/products",{headers:{"X-Demo-User":String(s?.user_id)}}); }
 export function createProduct(payload:unknown) { const s=session(); return apiRequest<any>("/admin/products",{method:"POST",headers:{"X-Demo-User":String(s?.user_id)},body:JSON.stringify(payload)}); }
